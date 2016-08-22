@@ -76,6 +76,11 @@ function displayParentNotificationType(item){
     return '';
 }
 
+var tooltipConfig = function(element, isInit) {
+    if (!isInit) {
+        $(element).tooltip();
+    }
+};
 
 function ProjectNotifications(data) {
 
@@ -84,6 +89,10 @@ function ProjectNotifications(data) {
         divID: 'grid',
         filesData: data,
         naturalScrollLimit : 0,
+        onload : function () {
+            var tb = this;
+            expandOnLoad.call(tb);
+        },
         resolveRows: function notificationResolveRows(item){
             var columns = [];
             var iconcss = '';
@@ -102,7 +111,7 @@ function ProjectNotifications(data) {
                             return m('div[style="padding-left:5px"]',
                                         [m ('p', [
                                                 m('b', item.data.node.title + ': '),
-                                                m('span[class="text-warning"]', ' No configured projects.')]
+                                                m('span[class="text-muted"]', ' No configured projects.')]
                                         )]
                             );
                         }
@@ -114,11 +123,17 @@ function ProjectNotifications(data) {
                         filter : true,
                         sortInclude : false,
                         custom : function() {
-                            return m('div[style="padding-left:5px"]',
-                                    [m('p',
-                                        [m('b', item.data.node.title + ':')]
-                                )]
-                            );
+                            return m('div[style="padding-left:5px; padding-bottom:50px"]', [
+                                m('p', [
+                                    m('b', item.data.node.title + ':  '),
+                                        m('span[class="fa fa-info-circle"]', {
+                                            'data-toggle': 'tooltip',
+                                            'title':item.data.node.help,
+                                            'config': tooltipConfig,
+                                            'data-placement': 'bottom'
+                                        })
+                                ])
+                            ]);
                         }
                     });
                 }
@@ -156,17 +171,26 @@ function ProjectNotifications(data) {
                     folderIcons : false,
                     filter : false,
                     custom : function(item, col) {
+                        var mentionsInTitle = ~item.data.event.title.indexOf('mentions');
+                        var notificationOptions;
+                        if (mentionsInTitle)
+                            notificationOptions = [m('option', {value: 'email_transactional', selected: 'email_transactional', disabled: true}, 'Instantly')];
+                        else {
+                            var type = item.data.event.notificationType;
+                            notificationOptions = [
+                                m('option', {value: 'none', selected : type === 'none' ? 'selected': ''}, 'Never'),
+                                m('option', {value: 'email_transactional', selected : type === 'email_transactional' ? 'selected': ''}, 'Instantly'),
+                                m('option', {value: 'email_digest', selected : type === 'email_digest' ? 'selected': ''}, 'Daily')
+                            ];
+                        }
                         return m('div[style="padding-right:10px"]',
                             [m('select.form-control', {
                                 onchange: function(ev) {
                                     subscribe(item, ev.target.value);
                                 }},
-                                [
-                                    m('option', {value: 'none', selected : item.data.event.notificationType === 'none' ? 'selected': ''}, 'Never'),
-                                    m('option', {value: 'email_transactional', selected : item.data.event.notificationType === 'email_transactional' ? 'selected': ''}, 'Instantly'),
-                                    m('option', {value: 'email_digest', selected : item.data.event.notificationType === 'email_digest' ? 'selected': ''}, 'Daily')
-                            ])
-                        ]);
+                                notificationOptions
+                            )]
+                        );
                     }
                 });
             }
@@ -210,7 +234,6 @@ function ProjectNotifications(data) {
         }
     });
     var grid = new Treebeard(tbOptions);
-    expandOnLoad.call(grid.tbController);
 }
 
 module.exports = ProjectNotifications;

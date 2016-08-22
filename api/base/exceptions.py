@@ -66,7 +66,7 @@ def json_api_exception_handler(exc, context):
             response['X-OSF-OTP'] = 'required; app'
 
         if isinstance(exc, JSONAPIException):
-            errors.extend([{'source': exc.source or {}, 'detail': exc.detail}])
+            errors.extend([{'source': exc.source or {}, 'detail': exc.detail, 'meta': exc.meta or {}}])
         elif isinstance(message, dict):
             errors.extend(dict_error_formatting(message, None))
         else:
@@ -83,6 +83,11 @@ def json_api_exception_handler(exc, context):
     return response
 
 
+class EndpointNotImplementedError(APIException):
+    status_code = status.HTTP_501_NOT_IMPLEMENTED
+    default_detail = _('This endpoint is not yet implemented.')
+
+
 class ServiceUnavailableError(APIException):
     status_code = status.HTTP_503_SERVICE_UNAVAILABLE
     default_detail = _('Service is unavailable at this time.')
@@ -95,15 +100,18 @@ class JSONAPIException(APIException):
     :param dict source: A dictionary containing references to the source of the error.
         See http://jsonapi.org/format/#error-objects.
         Example: ``source={'pointer': '/data/attributes/title'}``
+    :param dict meta: A meta object containing non-standard meta info about the error.
     """
     status_code = status.HTTP_400_BAD_REQUEST
-    def __init__(self, detail=None, source=None):
+
+    def __init__(self, detail=None, source=None, meta=None):
         super(JSONAPIException, self).__init__(detail=detail)
         self.source = source
+        self.meta = meta
 
 
 # Custom Exceptions the Django Rest Framework does not support
-class Gone(APIException):
+class Gone(JSONAPIException):
     status_code = status.HTTP_410_GONE
     default_detail = ('The requested resource is no longer available.')
 
@@ -157,10 +165,10 @@ class InvalidFilterValue(JSONAPIParameterException):
         if not detail:
             detail = "Value '{0}' is not valid".format(value)
             if field_type:
-                detail += " for a filter on type {0}".format(
+                detail += ' for a filter on type {0}'.format(
                     field_type
                 )
-            detail += "."
+            detail += '.'
         super(InvalidFilterValue, self).__init__(detail=detail, parameter='filter')
 
 
@@ -223,3 +231,14 @@ class TargetNotSupportedError(Exception):
 class RelationshipPostMakesNoChanges(Exception):
     """Raised when a post is on a relationship that already exists, so view can return a 204"""
     pass
+
+
+class NonDescendantNodeError(APIException):
+    """Raised when a client attempts to associate a non-descendant node with a view only link"""
+    status_code = 400
+    default_detail = _('The node {0} cannot be affiliated with this View Only Link because the node you\'re trying to affiliate is not descended from the node that the View Only Link is attached to.')
+
+    def __init__(self, node_id, detail=None):
+        if not detail:
+            detail = self.default_detail.format(node_id)
+        super(NonDescendantNodeError, self).__init__(detail=detail)

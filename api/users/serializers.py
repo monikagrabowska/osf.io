@@ -2,8 +2,8 @@ from rest_framework import serializers as ser
 
 from modularodm.exceptions import ValidationValueError
 
-from api.base.exceptions import InvalidModelValueError
-from api.base.serializers import AllowMissing, JSONAPIRelationshipSerializer
+from api.base.exceptions import InvalidModelValueError, JSONAPIException, Conflict
+from api.base.serializers import AllowMissing, JSONAPIRelationshipSerializer, HideIfDisabled
 from website.models import User
 
 from api.base.serializers import (
@@ -11,6 +11,7 @@ from api.base.serializers import (
 )
 from api.base.utils import absolute_reverse
 
+from framework.auth.views import send_confirm_email
 
 class UserSerializer(JSONAPISerializer):
     filterable_fields = frozenset([
@@ -27,52 +28,61 @@ class UserSerializer(JSONAPISerializer):
     given_name = ser.CharField(required=False, allow_blank=True, help_text='For bibliographic citations')
     middle_names = ser.CharField(required=False, allow_blank=True, help_text='For bibliographic citations')
     family_name = ser.CharField(required=False, allow_blank=True, help_text='For bibliographic citations')
-    suffix = ser.CharField(required=False, allow_blank=True, help_text='For bibliographic citations')
-    date_registered = ser.DateTimeField(read_only=True)
+    suffix = HideIfDisabled(ser.CharField(required=False, allow_blank=True, help_text='For bibliographic citations'))
+    date_registered = HideIfDisabled(ser.DateTimeField(read_only=True))
+    active = HideIfDisabled(ser.BooleanField(read_only=True, source='is_active'))
 
     # Social Fields are broken out to get around DRF complex object bug and to make API updating more user friendly.
-    gitHub = DevOnly(AllowMissing(ser.CharField(required=False, source='social.github',
-                                                          allow_blank=True, help_text='GitHub Handle'), required=False, source='social.github'))
-    scholar = DevOnly(AllowMissing(ser.CharField(required=False, source='social.scholar',
-                                                           allow_blank=True, help_text='Google Scholar Account'), required=False, source='social.scholar'))
-    personal_website = DevOnly(AllowMissing(ser.URLField(required=False, source='social.personal',
-                                                                   allow_blank=True, help_text='Personal Website'), required=False, source='social.personal'))
-    twitter = DevOnly(AllowMissing(ser.CharField(required=False, source='social.twitter',
-                                                           allow_blank=True, help_text='Twitter Handle'), required=False, source='social.twitter'))
-    linkedIn = DevOnly(AllowMissing(ser.CharField(required=False, source='social.linkedIn',
-                                                            allow_blank=True, help_text='LinkedIn Account'), required=False, source='social.linkedIn'))
-    impactStory = DevOnly(AllowMissing(ser.CharField(required=False, source='social.impactStory',
-                                                               allow_blank=True, help_text='ImpactStory Account'), required=False, source='social.impactStory'))
-    orcid = DevOnly(AllowMissing(ser.CharField(required=False, source='social.orcid',
-                                                         allow_blank=True, help_text='ORCID'), required=False, source='social.orcid'))
-    researcherId = DevOnly(AllowMissing(ser.CharField(required=False, source='social.researcherId',
-                                                      allow_blank=True, help_text='ResearcherId Account'), required=False, source='social.researcherId'))
-    researchGate = DevOnly(AllowMissing(ser.CharField(required=False, source='social.researchGate',
-                                                      allow_blank=True, help_text='ResearchGate Account'), required=False, source='social.researchGate'))
-    academiaInstitution = DevOnly(AllowMissing(ser.CharField(required=False, source='social.academiaInstitution',
-                                                      allow_blank=True, help_text='AcademiaInstitution Field'), required=False, source='social.academiaInstitution'))
-    academiaProfileID = DevOnly(AllowMissing(ser.CharField(required=False, source='social.academiaProfileID',
-                                                      allow_blank=True, help_text='AcademiaProfileID Field'), required=False, source='social.academiaProfileID'))
-    baiduScholar = DevOnly(AllowMissing(ser.CharField(required=False, source='social.baiduScholar',
-                                                           allow_blank=True, help_text='Baidu Scholar Account'), required=False, source='social.baiduScholar'))
-    links = LinksField(
+    github = DevOnly(HideIfDisabled(AllowMissing(ser.CharField(required=False, source='social.github',
+                                                          allow_blank=True, help_text='GitHub Handle'), required=False, source='social.github')))
+    scholar = DevOnly(HideIfDisabled(AllowMissing(ser.CharField(required=False, source='social.scholar',
+                                                           allow_blank=True, help_text='Google Scholar Account'), required=False, source='social.scholar')))
+    personal_website = DevOnly(HideIfDisabled(AllowMissing(ser.URLField(required=False, source='social.personal',
+                                                                   allow_blank=True, help_text='Personal Website'), required=False, source='social.personal')))
+    twitter = DevOnly(HideIfDisabled(AllowMissing(ser.CharField(required=False, source='social.twitter',
+                                                           allow_blank=True, help_text='Twitter Handle'), required=False, source='social.twitter')))
+    linkedin = DevOnly(HideIfDisabled(AllowMissing(ser.CharField(required=False, source='social.linkedIn',
+                                                            allow_blank=True, help_text='LinkedIn Account'), required=False, source='social.linkedIn')))
+    impactstory = DevOnly(HideIfDisabled(AllowMissing(ser.CharField(required=False, source='social.impactStory',
+                                                               allow_blank=True, help_text='ImpactStory Account'), required=False, source='social.impactStory')))
+    orcid = DevOnly(HideIfDisabled(AllowMissing(ser.CharField(required=False, source='social.orcid',
+                                                         allow_blank=True, help_text='ORCID'), required=False, source='social.orcid')))
+    researcherid = DevOnly(HideIfDisabled(AllowMissing(ser.CharField(required=False, source='social.researcherId',
+                                                      allow_blank=True, help_text='ResearcherId Account'), required=False, source='social.researcherId')))
+    researchgate = DevOnly(HideIfDisabled(AllowMissing(ser.CharField(required=False, source='social.researchGate',
+                                                      allow_blank=True, help_text='ResearchGate Account'), required=False, source='social.researchGate')))
+    academia_institution = DevOnly(HideIfDisabled(AllowMissing(ser.CharField(required=False, source='social.academiaInstitution',
+                                                      allow_blank=True, help_text='AcademiaInstitution Field'), required=False, source='social.academiaInstitution')))
+    academia_profile_id = DevOnly(HideIfDisabled(AllowMissing(ser.CharField(required=False, source='social.academiaProfileID',
+                                                      allow_blank=True, help_text='AcademiaProfileID Field'), required=False, source='social.academiaProfileID')))
+    baiduscholar = DevOnly(HideIfDisabled(AllowMissing(ser.CharField(required=False, source='social.baiduScholar',
+                                                           allow_blank=True, help_text='Baidu Scholar Account'), required=False, source='social.baiduScholar')))
+    timezone = HideIfDisabled(ser.CharField(required=False, help_text="User's timezone, e.g. 'Etc/UTC"))
+    locale = HideIfDisabled(ser.CharField(required=False, help_text="User's locale, e.g.  'en_US'"))
+
+    links = HideIfDisabled(LinksField(
         {
             'html': 'absolute_url',
             'profile_image': 'profile_image_url',
         }
-    )
+    ))
 
-    nodes = RelationshipField(
+    nodes = HideIfDisabled(RelationshipField(
         related_view='users:user-nodes',
         related_view_kwargs={'user_id': '<pk>'},
-    )
+    ))
 
-    institutions = RelationshipField(
+    registrations = DevOnly(HideIfDisabled(RelationshipField(
+        related_view='users:user-registrations',
+        related_view_kwargs={'user_id': '<pk>'},
+    )))
+
+    institutions = HideIfDisabled(RelationshipField(
         related_view='users:user-institutions',
         related_view_kwargs={'user_id': '<pk>'},
         self_view='users:user-institutions-relationship',
         self_view_kwargs={'user_id': '<pk>'},
-    )
+    ))
 
     class Meta:
         type_ = 'users'
@@ -103,6 +113,67 @@ class UserSerializer(JSONAPISerializer):
             raise InvalidModelValueError(detail=e.message)
         return instance
 
+
+class UserCreateSerializer(UserSerializer):
+    username = ser.EmailField(required=False)
+
+    def create(self, validated_data):
+        username = validated_data.get('username', '').lower() or None
+        full_name = validated_data.get('fullname')
+        if not full_name:
+            raise JSONAPIException('A `full_name` is required to create a user.')
+
+        user = User.create_unregistered(full_name, email=username)
+        user.registered_by = self.context['request'].user
+        if username:
+            user.add_unconfirmed_email(user.username)
+
+        try:
+            user.save()
+        except ValidationValueError:
+            raise Conflict('User with specified username already exists.')
+
+        if self.context['request'].GET.get('send_email', False) and username:
+            send_confirm_email(user, user.username)
+
+        return user
+
+class UserAddonSettingsSerializer(JSONAPISerializer):
+    """
+    Overrides UserSerializer to make id required.
+    """
+    id = ser.CharField(source='config.short_name', read_only=True)
+    user_has_auth = ser.BooleanField(source='has_auth', read_only=True)
+
+    links = LinksField({
+        'self': 'get_absolute_url',
+        'accounts': 'account_links'
+    })
+
+    class Meta:
+        type_ = 'user_addons'
+
+    def get_absolute_url(self, obj):
+        user_id = self.context['request'].parser_context['kwargs']['user_id']
+        return absolute_reverse(
+            'users:user-addon-detail',
+            kwargs={
+                'user_id': user_id,
+                'provider': obj.config.short_name
+            }
+        )
+
+    def account_links(self, obj):
+        # TODO: [OSF-4933] remove this after refactoring Figshare
+        if hasattr(obj, 'external_accounts'):
+            return {
+                account._id: {
+                    'account': absolute_reverse('users:user-external_account-detail', kwargs={'user_id': obj.owner._id, 'provider': obj.config.short_name, 'account_id': account._id}),
+                    'nodes_connected': [n.absolute_api_v2_url for n in obj.get_attached_nodes(account)]
+                }
+                for account in obj.external_accounts
+            }
+        return {}
 
 class UserDetailSerializer(UserSerializer):
     """

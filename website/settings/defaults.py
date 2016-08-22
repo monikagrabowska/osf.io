@@ -9,6 +9,7 @@ import os
 import json
 import hashlib
 from datetime import timedelta
+from collections import OrderedDict
 
 os_env = os.environ
 
@@ -34,13 +35,19 @@ with open(os.path.join(APP_PATH, 'package.json'), 'r') as fobj:
 EMAIL_TOKEN_EXPIRATION = 24
 CITATION_STYLES_PATH = os.path.join(BASE_PATH, 'static', 'vendor', 'bower_components', 'styles')
 
+# Minimum seconds between forgot password email attempts
+SEND_EMAIL_THROTTLE = 30
+
 # Hours before pending embargo/retraction/registration automatically becomes active
 RETRACTION_PENDING_TIME = datetime.timedelta(days=2)
 EMBARGO_PENDING_TIME = datetime.timedelta(days=2)
+EMBARGO_TERMINATION_PENDING_TIME = datetime.timedelta(days=2)
 REGISTRATION_APPROVAL_TIME = datetime.timedelta(days=2)
 # Date range for embargo periods
 EMBARGO_END_DATE_MIN = datetime.timedelta(days=2)
 EMBARGO_END_DATE_MAX = datetime.timedelta(days=1460)  # Four years
+# Question titles to be reomved for anonymized VOL
+ANONYMIZED_TITLES = ['Authors']
 
 LOAD_BALANCER = False
 PROXY_ADDRS = []
@@ -48,16 +55,20 @@ PROXY_ADDRS = []
 # May set these to True in local.py for development
 DEV_MODE = False
 DEBUG_MODE = False
+SECURE_MODE = not DEBUG_MODE  # Set secure cookie
+
+PROTOCOL = 'https://' if SECURE_MODE else 'http://'
+DOMAIN = PROTOCOL + 'localhost:5000/'
+API_DOMAIN = PROTOCOL + 'localhost:8000/'
+
+# External Ember App Local Development
+USE_EXTERNAL_EMBER = False
+EXTERNAL_EMBER_APPS = {}
 
 LOG_PATH = os.path.join(APP_PATH, 'logs')
 TEMPLATES_PATH = os.path.join(BASE_PATH, 'templates')
 ANALYTICS_PATH = os.path.join(BASE_PATH, 'analytics')
 
-CORE_TEMPLATES = os.path.join(BASE_PATH, 'templates/log_templates.mako')
-BUILT_TEMPLATES = os.path.join(BASE_PATH, 'templates/_log_templates.mako')
-
-DOMAIN = 'http://localhost:5000/'
-API_DOMAIN = 'http://localhost:8000/'
 GNUPG_HOME = os.path.join(BASE_PATH, 'gpg')
 GNUPG_BINARY = 'gpg'
 
@@ -76,11 +87,19 @@ SHARE_ELASTIC_INDEX = 'share'
 SHARE_ELASTIC_INDEX_TEMPLATE = 'share_v{}'
 
 # Sessions
+COOKIE_NAME = 'osf'
 # TODO: Override OSF_COOKIE_DOMAIN in local.py in production
 OSF_COOKIE_DOMAIN = None
-COOKIE_NAME = 'osf'
+# server-side verification timeout
+OSF_SESSION_TIMEOUT = 30 * 24 * 60 * 60  # 30 days in seconds
 # TODO: Override SECRET_KEY in local.py in production
 SECRET_KEY = 'CHANGEME'
+SESSION_COOKIE_SECURE = SECURE_MODE
+SESSION_COOKIE_HTTPONLY = True
+
+# local path to private key and cert for local development using https, overwrite in local.py
+OSF_SERVER_KEY = None
+OSF_SERVER_CERT = None
 
 # Change if using `scripts/cron.py` to manage crontab
 CRON_USER = None
@@ -189,6 +208,23 @@ WIKI_WHITELIST = {
     ]
 }
 
+# Maps category identifier => Human-readable representation for use in
+# titles, menus, etc.
+# Use an OrderedDict so that menu items show in the correct order
+NODE_CATEGORY_MAP = OrderedDict([
+    ('analysis', 'Analysis'),
+    ('communication', 'Communication'),
+    ('data', 'Data'),
+    ('hypothesis', 'Hypothesis'),
+    ('instrumentation', 'Instrumentation'),
+    ('methods and measures', 'Methods and Measures'),
+    ('procedure', 'Procedure'),
+    ('project', 'Project'),
+    ('software', 'Software'),
+    ('other', 'Other'),
+    ('', 'Uncategorized')
+])
+
 # Add-ons
 # Load addons from addons.json
 with open(os.path.join(ROOT, 'addons.json')) as fp:
@@ -196,6 +232,9 @@ with open(os.path.join(ROOT, 'addons.json')) as fp:
     ADDONS_REQUESTED = addon_settings['addons']
     ADDONS_ARCHIVABLE = addon_settings['addons_archivable']
     ADDONS_COMMENTABLE = addon_settings['addons_commentable']
+    ADDONS_BASED_ON_IDS = addon_settings['addons_based_on_ids']
+    ADDONS_DESCRIPTION = addon_settings['addons_description']
+    ADDONS_URL = addon_settings['addons_url']
 
 ADDON_CATEGORIES = [
     'documentation',
@@ -212,15 +251,19 @@ SYSTEM_ADDED_ADDONS = {
     'node': [],
 }
 
-# Piwik
-
-# TODO: Override in local.py in production
-PIWIK_HOST = None
-PIWIK_ADMIN_TOKEN = None
-PIWIK_SITE_ID = None
-
-KEEN_PROJECT_ID = None
-KEEN_WRITE_KEY = None
+KEEN = {
+    'public': {
+        'project_id': None,
+        'master_key': 'changeme',
+        'write_key': '',
+        'read_key': '',
+    },
+    'private': {
+        'project_id': '',
+        'write_key': '',
+        'read_key': '',
+    },
+}
 
 SENTRY_DSN = None
 SENTRY_DSN_JS = None
@@ -229,11 +272,17 @@ SENTRY_DSN_JS = None
 # TODO: Delete me after merging GitLab
 MISSING_FILE_NAME = 'untitled'
 
-# Dashboard
+# Project Organizer
 ALL_MY_PROJECTS_ID = '-amp'
 ALL_MY_REGISTRATIONS_ID = '-amr'
 ALL_MY_PROJECTS_NAME = 'All my projects'
 ALL_MY_REGISTRATIONS_NAME = 'All my registrations'
+
+# Most Popular and New and Noteworthy Nodes
+POPULAR_LINKS_NODE = None  # TODO Override in local.py in production.
+NEW_AND_NOTEWORTHY_LINKS_NODE = None  # TODO Override in local.py in production.
+
+NEW_AND_NOTEWORTHY_CONTRIBUTOR_BLACKLIST = []  # TODO Override in local.py in production.
 
 # FOR EMERGENCIES ONLY: Setting this to True will disable forks, registrations,
 # and uploads in order to save disk space.
@@ -286,24 +335,95 @@ JWT_ALGORITHM = 'HS256'
 
 ##### CELERY #####
 
+DEFAULT_QUEUE = 'celery'
+LOW_QUEUE = 'low'
+MED_QUEUE = 'med'
+HIGH_QUEUE = 'high'
+
+LOW_PRI_MODULES = {
+    'framework.analytics.tasks',
+    'framework.celery_tasks',
+    'scripts.osfstorage.usage_audit',
+    'scripts.osfstorage.glacier_inventory',
+    'scripts.analytics.tasks',
+    'scripts.osfstorage.files_audit',
+    'scripts.osfstorage.glacier_audit',
+    'scripts.populate_new_and_noteworthy_projects',
+    'website.search.elastic_search',
+}
+
+MED_PRI_MODULES = {
+    'framework.email.tasks',
+    'scripts.send_queued_mails',
+    'scripts.triggered_mails',
+    'website.mailchimp_utils',
+    'website.notifications.tasks',
+}
+
+HIGH_PRI_MODULES = {
+    'scripts.approve_embargo_terminations',
+    'scripts.approve_registrations',
+    'scripts.embargo_registrations',
+    'scripts.refresh_addon_tokens',
+    'scripts.retract_registrations',
+    'website.archiver.tasks',
+}
+
+try:
+    from kombu import Queue, Exchange
+except ImportError:
+    pass
+else:
+    CELERY_QUEUES = (
+        Queue(LOW_QUEUE, Exchange(LOW_QUEUE), routing_key=LOW_QUEUE,
+              consumer_arguments={'x-priority': -1}),
+        Queue(DEFAULT_QUEUE, Exchange(DEFAULT_QUEUE), routing_key=DEFAULT_QUEUE,
+              consumer_arguments={'x-priority': 0}),
+        Queue(MED_QUEUE, Exchange(MED_QUEUE), routing_key=MED_QUEUE,
+              consumer_arguments={'x-priority': 1}),
+        Queue(HIGH_QUEUE, Exchange(HIGH_QUEUE), routing_key=HIGH_QUEUE,
+              consumer_arguments={'x-priority': 10}),
+    )
+
+    CELERY_DEFAULT_EXCHANGE_TYPE = 'direct'
+    CELERY_ROUTES = ('framework.celery_tasks.routers.CeleryRouter', )
+    CELERY_IGNORE_RESULT = True
+    CELERY_STORE_ERRORS_EVEN_IF_IGNORED = True
+
 # Default RabbitMQ broker
 BROKER_URL = 'amqp://'
 
 # Default RabbitMQ backend
 CELERY_RESULT_BACKEND = 'amqp://'
 
-#  Modules to import when celery launches
+# Modules to import when celery launches
 CELERY_IMPORTS = (
-    'framework.tasks',
-    'framework.tasks.signals',
+    'framework.celery_tasks',
+    'framework.celery_tasks.signals',
     'framework.email.tasks',
-    'framework.analytics.tasks',
     'website.mailchimp_utils',
     'website.notifications.tasks',
     'website.archiver.tasks',
     'website.search.search',
-    'api.caching.tasks'
+    'scripts.populate_new_and_noteworthy_projects',
+    'scripts.refresh_addon_tokens',
+    'scripts.retract_registrations',
+    'scripts.embargo_registrations',
+    'scripts.approve_registrations',
+    'scripts.approve_embargo_terminations',
+    'scripts.triggered_mails',
+    'scripts.send_queued_mails',
 )
+
+# Modules that need metrics and release requirements
+# CELERY_IMPORTS += (
+#     'scripts.osfstorage.glacier_inventory',
+#     'scripts.osfstorage.glacier_audit',
+#     'scripts.osfstorage.usage_audit',
+#     'scripts.osfstorage.files_audit',
+#     'scripts.analytics.tasks',
+#     'scripts.analytics.upload',
+# )
 
 # celery.schedule will not be installed when running invoke requirements the first time.
 try:
@@ -314,16 +434,106 @@ else:
     #  Setting up a scheduler, essentially replaces an independent cron job
     CELERYBEAT_SCHEDULE = {
         '5-minute-emails': {
-            'task': 'notify.send_users_email',
+            'task': 'website.notifications.tasks.send_users_email',
             'schedule': crontab(minute='*/5'),
             'args': ('email_transactional',),
         },
         'daily-emails': {
-            'task': 'notify.send_users_email',
+            'task': 'website.notifications.tasks.send_users_email',
             'schedule': crontab(minute=0, hour=0),
             'args': ('email_digest',),
         },
+        'refresh_addons': {
+            'task': 'scripts.refresh_addon_tokens',
+            'schedule': crontab(minute=0, hour= 2),  # Daily 2:00 a.m
+            'kwargs': {'dry_run': False, 'addons': {'box': 60, 'googledrive': 14, 'mendeley': 14}},
+        },
+        'retract_registrations': {
+            'task': 'scripts.retract_registrations',
+            'schedule': crontab(minute=0, hour=0),  # Daily 12 a.m
+            'kwargs': {'dry_run': False},
+        },
+        'embargo_registrations': {
+            'task': 'scripts.embargo_registrations',
+            'schedule': crontab(minute=0, hour=0),  # Daily 12 a.m
+            'kwargs': {'dry_run': False},
+        },
+        'approve_registrations': {
+            'task': 'scripts.approve_registrations',
+            'schedule': crontab(minute=0, hour=0),  # Daily 12 a.m
+            'kwargs': {'dry_run': False},
+        },
+        'approve_embargo_terminations': {
+            'task': 'scripts.approve_embargo_terminations',
+            'schedule': crontab(minute=0, hour=0),  # Daily 12 a.m
+            'kwargs': {'dry_run': False},
+        },
+        'triggered_mails': {
+            'task': 'scripts.triggered_mails',
+            'schedule': crontab(minute=0, hour=0),  # Daily 12 a.m
+            'kwargs': {'dry_run': False},
+        },
+        'send_queued_mails': {
+            'task': 'scripts.send_queued_mails',
+            'schedule': crontab(minute=0, hour=12),  # Daily 12 p.m.
+            'kwargs': {'dry_run': False},
+        },
+        'new-and-noteworthy': {
+            'task': 'scripts.populate_new_and_noteworthy_projects',
+            'schedule': crontab(minute=0, hour=2, day_of_week=6),  # Saturday 2:00 a.m.
+            'kwargs': {'dry_run': False}
+        },
     }
+
+    # Tasks that need metrics and release requirements
+    # CELERYBEAT_SCHEDULE.update({
+    #     'usage_audit': {
+    #         'task': 'scripts.osfstorage.usage_audit',
+    #         'schedule': crontab(minute=0, hour=0),  # Daily 12 a.m
+    #         'kwargs': {'send_mail': True},
+    #     },
+    #     'glacier_inventory': {
+    #         'task': 'scripts.osfstorage.glacier_inventory',
+    #         'schedule': crontab(minute=0, hour= 0, day_of_week=0),  # Sunday 12:00 a.m.
+    #         'args': (),
+    #     },
+    #     'glacier_audit': {
+    #         'task': 'scripts.osfstorage.glacier_audit',
+    #         'schedule': crontab(minute=0, hour=6, day_of_week=0),  # Sunday 6:00 a.m.
+    #         'kwargs': {'dry_run': False},
+    #     },
+    #     'files_audit_0': {
+    #         'task': 'scripts.osfstorage.files_audit.0',
+    #         'schedule': crontab(minute=0, hour=2, day_of_week=0),  # Sunday 2:00 a.m.
+    #         'kwargs': {'num_of_workers': 4, 'dry_run': False},
+    #     },
+    #     'files_audit_1': {
+    #         'task': 'scripts.osfstorage.files_audit.1',
+    #         'schedule': crontab(minute=0, hour=2, day_of_week=0),  # Sunday 2:00 a.m.
+    #         'kwargs': {'num_of_workers': 4, 'dry_run': False},
+    #     },
+    #     'files_audit_2': {
+    #         'task': 'scripts.osfstorage.files_audit.2',
+    #         'schedule': crontab(minute=0, hour=2, day_of_week=0),  # Sunday 2:00 a.m.
+    #         'kwargs': {'num_of_workers': 4, 'dry_run': False},
+    #     },
+    #     'files_audit_3': {
+    #         'task': 'scripts.osfstorage.files_audit.3',
+    #         'schedule': crontab(minute=0, hour=2, day_of_week=0),  # Sunday 2:00 a.m.
+    #         'kwargs': {'num_of_workers': 4, 'dry_run': False},
+    #     },
+    #     'analytics': {
+    #         'task': 'scripts.analytics.tasks',
+    #         'schedule': crontab(minute=0, hour=2),  # Daily 2:00 a.m.
+    #         'kwargs': {}
+    #     },
+    #     'analytics-upload': {
+    #         'task': 'scripts.analytics.upload',
+    #         'schedule': crontab(minute=0, hour=6),  # Daily 6:00 a.m.
+    #         'kwargs': {}
+    #     },
+    # })
+
 
 WATERBUTLER_JWE_SALT = 'yusaltydough'
 WATERBUTLER_JWE_SECRET = 'CirclesAre4Squares'
@@ -338,3 +548,11 @@ assert (DRAFT_REGISTRATION_APPROVAL_PERIOD > EMBARGO_END_DATE_MIN), 'The draft r
 PREREG_ADMIN_TAG = "prereg_admin"
 
 ENABLE_INSTITUTIONS = False
+
+ENABLE_VARNISH = False
+ENABLE_ESI = False
+VARNISH_SERVERS = []  # This should be set in local.py or cache invalidation won't work
+ESI_MEDIA_TYPES = {'application/vnd.api+json', 'application/json'}
+
+# Used for gathering meta information about the current build
+GITHUB_API_TOKEN = None

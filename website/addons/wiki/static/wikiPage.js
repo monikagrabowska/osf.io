@@ -84,16 +84,19 @@ function ViewWidget(visible, version, viewText, rendered, contentURL, allowMathj
 
                 request.done(function (resp) {
                     if(self.visible()) {
+                        var $markdownElement = $('#wikiViewRender');
                         var rawContent = resp.wiki_content || '*No wiki content*';
                         if (resp.wiki_rendered) {
                             // Use pre-rendered python, if provided. Don't mathjaxify
                             self.allowMathjaxification(false);
                             self.rendered(resp.wiki_rendered);
+                            $markdownElement.css('display', 'inherit');
 
                         } else {
                             // Render raw markdown
                             self.allowMathjaxification(true);
                             self.rendered(self.renderMarkdown(rawContent));
+                            $markdownElement.css('display', 'inherit');
                         }
                         self.displaySource(rawContent);
                     }
@@ -160,7 +163,6 @@ var defaultOptions = {
 
 function ViewModel(options){
     var self = this;
-
     // enabled?
     self.editVis = ko.observable(options.editVisible);
     self.viewVis = ko.observable(options.viewVisible);
@@ -216,7 +218,6 @@ function ViewModel(options){
         }
         return versionString;
     });
-
     // Save initial query params (except for the "mode" query params, which are handled
     // by self.currentURL), so that we can preserve them when we mutate window.history.state
     var initialParams = $osf.urlParams();
@@ -239,7 +240,6 @@ function ViewModel(options){
             url += paramPrefix + self.initialQueryParams;
             paramPrefix = '&';
         }
-
         // Default view is special cased
         if (!self.editVis() && self.viewVis() && self.viewVersion() === 'current' && !self.compareVis() && self.menuVis()) {
             window.history.replaceState({}, '', url);
@@ -286,9 +286,7 @@ function ViewModel(options){
     bodyElement.on('togglePanel', function (event, panel, display) {
         // Update self.editVis, self.viewVis, or self.compareVis in viewmodel
         self[panel + 'Vis'](display);
-
         //URL needs to be a computed observable, and this should just update the panel states, which will feed URL
-
         // Switch view to correct version
         if (panel === 'edit') {
             if (display) {

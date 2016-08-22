@@ -11,7 +11,6 @@ import uuid
 
 from flask import request
 from oauthlib.oauth2.rfc6749.errors import MissingTokenError
-from oauthlib.oauth2 import InvalidGrantError
 from requests.exceptions import HTTPError as RequestsHTTPError
 
 from modularodm import fields, Q
@@ -27,12 +26,9 @@ from framework.mongo.utils import unique_on
 from framework.mongo.validators import string_required
 from framework.sessions import session
 from website import settings
-from website.addons.base.exceptions import InvalidAuthError
 from website.oauth.utils import PROVIDER_LOOKUP
 from website.security import random_string
-from website.util import web_url_for
-
-from api.base.utils import absolute_reverse
+from website.util import web_url_for, api_v2_url
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +115,8 @@ class ExternalProvider(object):
 
     # Providers that have expiring tokens must override these
     auto_refresh_url = None
-    refresh_time = 0
+    refresh_time = 0  # When to refresh the oauth_key (seconds)
+    expiry_time = 0   # If/When the refresh token expires (seconds). 0 indicates a non-expiring refresh token
 
     def __init__(self, account=None):
         super(ExternalProvider, self).__init__()
@@ -149,7 +146,7 @@ class ExternalProvider(object):
         """
 
         # create a dict on the session object if it's not already there
-        if session.data.get("oauth_states") is None:
+        if session.data.get('oauth_states') is None:
             session.data['oauth_states'] = {}
 
         if self._oauth_version == OAUTH2:
@@ -228,14 +225,14 @@ class ExternalProvider(object):
         try:
             cached_credentials = session.data['oauth_states'][self.short_name]
         except KeyError:
-            raise PermissionsError("OAuth flow not recognized.")
+            raise PermissionsError('OAuth flow not recognized.')
 
         if self._oauth_version == OAUTH1:
             request_token = request.args.get('oauth_token')
 
             # make sure this is the same user that started the flow
             if cached_credentials.get('token') != request_token:
-                raise PermissionsError("Request token does not match")
+                raise PermissionsError('Request token does not match')
 
             response = OAuth1Session(
                 client_key=self.client_id,
@@ -250,7 +247,7 @@ class ExternalProvider(object):
 
             # make sure this is the same user that started the flow
             if cached_credentials.get('state') != state:
-                raise PermissionsError("Request token does not match")
+                raise PermissionsError('Request token does not match')
 
             try:
                 response = OAuth2Session(
@@ -390,15 +387,18 @@ class ExternalProvider(object):
         """
         # Ensure this is an authenticated Provider that uses token refreshing
         if not (self.account and self.auto_refresh_url):
-            return
+            return False
 
         # Ensure this Provider is for a valid addon
         if not (self.client_id and self.client_secret):
-            return
+            return False
 
         # Ensure a refresh is needed
         if not (force or self._needs_refresh()):
-            return
+            return False
+
+        if self.has_expired_credentials and not force:
+            return False
 
         resp_expiry_fn = resp_expiry_fn or (lambda x: datetime.datetime.utcfromtimestamp(time.time() + float(x['expires_in'])))
 
@@ -417,18 +417,15 @@ class ExternalProvider(object):
             'client_secret': self.client_secret
         })
 
-        try:
-            token = client.refresh_token(
-                self.auto_refresh_url,
-                **extra
-            )
-        except InvalidGrantError:
-            raise InvalidAuthError()
-        else:
-            self.account.oauth_key = token[resp_auth_token_key]
-            self.account.refresh_token = token[resp_refresh_token_key]
-            self.account.expires_at = resp_expiry_fn(token)
-            self.account.save()
+        token = client.refresh_token(
+            self.auto_refresh_url,
+            **extra
+        )
+        self.account.oauth_key = token[resp_auth_token_key]
+        self.account.refresh_token = token[resp_refresh_token_key]
+        self.account.expires_at = resp_expiry_fn(token)
+        self.account.save()
+        return True
 
     def _needs_refresh(self):
         """Determines whether or not an associated ExternalAccount needs
@@ -438,6 +435,17 @@ class ExternalProvider(object):
         """
         if self.refresh_time and self.account.expires_at:
             return (self.account.expires_at - datetime.datetime.utcnow()).total_seconds() < self.refresh_time
+        return False
+
+    @property
+    def has_expired_credentials(self):
+        """Determines whether or not an associated ExternalAccount has
+        expired credentials that can no longer be renewed
+
+        return bool: True if cannot be refreshed
+        """
+        if self.expiry_time and self.account.expires_at:
+            return (datetime.datetime.utcnow() - self.account.expires_at).total_seconds() > self.expiry_time
         return False
 
 
@@ -474,7 +482,6 @@ class ApiOAuth2Application(StoredObject):
                                     index=True)
 
     owner = fields.ForeignField('User',
-                                backref='created',
                                 index=True,
                                 required=True)
 
@@ -530,7 +537,8 @@ class ApiOAuth2Application(StoredObject):
     # Properties used by Django and DRF "Links: self" field
     @property
     def absolute_api_v2_url(self):
-        return absolute_reverse('applications:application-detail', kwargs={'client_id': self.client_id})
+        path = '/applications/{}/'.format(self.client_id)
+        return api_v2_url(path)
 
     # used by django and DRF
     def get_absolute_url(self):
@@ -548,10 +556,9 @@ class ApiOAuth2PersonalToken(StoredObject):
     # Name of the field being `token_id` is a CAS requirement.
     # This is the actual value of the token that's used to authenticate
     token_id = fields.StringField(default=functools.partial(random_string, length=70),
-                               unique=True)
+                                  unique=True)
 
     owner = fields.ForeignField('User',
-                                backref='created',
                                 index=True,
                                 required=True)
 
@@ -596,7 +603,8 @@ class ApiOAuth2PersonalToken(StoredObject):
     # Properties used by Django and DRF "Links: self" field
     @property
     def absolute_api_v2_url(self):
-        return absolute_reverse('tokens:token-detail', kwargs={'_id': self._id})
+        path = '/tokens/{}/'.format(self._id)
+        return api_v2_url(path)
 
     # used by django and DRF
     def get_absolute_url(self):

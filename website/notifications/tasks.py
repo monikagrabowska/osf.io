@@ -4,7 +4,7 @@ Tasks for making even transactional emails consolidated.
 from bson.code import Code
 from modularodm import Q
 
-from framework.tasks import app as celery_app
+from framework.celery_tasks import app as celery_app
 from framework.mongo import database as db
 from framework.auth.core import User
 from framework.sentry import log_exception
@@ -16,7 +16,7 @@ from website.notifications.model import NotificationDigest
 from website import mails
 
 
-@celery_app.task(name='notify.send_users_email', max_retries=0)
+@celery_app.task(name='website.notifications.tasks.send_users_email', max_retries=0)
 def send_users_email(send_type):
     """Find pending Emails and amalgamates them into a single Email.
 

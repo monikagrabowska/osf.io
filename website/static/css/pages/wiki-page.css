@@ -6,6 +6,9 @@
 .panel-heading.no-background {
     background: transparent;
 }
+.wiki-panel-header {
+    height: 50px;
+}
 .markdown-it-view {
     padding: 10px;
     height: auto;
@@ -132,7 +135,7 @@
     -webkit-flex: 3 0 auto;
     -ms-flex: 3 0 auto;
     flex: 3 0 auto;
-    height: 500px; /* this will get overwritten by flex box */
+    height: 400px; /* this will get overwritten by flex box */
 }
 
 /* Make wiki images responsive */
@@ -217,6 +220,15 @@
     -webkit-flex: 0 0 auto;
     -ms-flex: 0 0 auto;
     flex: 0 0 auto;
+}
+.wiki-view-icon-container  /* this keeps the container of the view icon and dropdown responsive */
+{
+    position: relative;
+    top: 50%;
+    transform: translateY(-50%);
+    -ms-transform: translateY(-50%);
+    -webkit-transform: translateY(-50%);
+    -moz-transform: translateY(-50%);
 }
 .wmd-button-bar {
     width: 100%;

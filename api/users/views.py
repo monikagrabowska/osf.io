@@ -1,31 +1,35 @@
+
 from rest_framework import generics
 from rest_framework import permissions as drf_permissions
-from rest_framework.exceptions import NotAuthenticated
+from rest_framework.exceptions import NotAuthenticated, NotFound
 from django.contrib.auth.models import AnonymousUser
 
 from modularodm import Q
 
-from framework.auth.core import Auth
 from framework.auth.oauth_scopes import CoreScopes
 
-from website.models import User, Node
+from website.models import User, Node, ExternalAccount
 
 from api.base import permissions as base_permissions
 from api.base.utils import get_object_or_error
 from api.base.exceptions import Conflict
+from api.base.serializers import AddonAccountSerializer
 from api.base.views import JSONAPIBaseView
-from api.base.filters import ODMFilterMixin
+from api.base.filters import ODMFilterMixin, ListFilterMixin
 from api.base.parsers import JSONAPIRelationshipParser, JSONAPIRelationshipParserForRegularJSON
 from api.nodes.serializers import NodeSerializer
 from api.institutions.serializers import InstitutionSerializer
 from api.registrations.serializers import RegistrationSerializer
+from api.base.utils import default_node_list_query, default_node_permission_query
+from api.addons.views import AddonSettingsMixin
 
-from .serializers import UserSerializer, UserDetailSerializer, UserInstitutionsRelationshipSerializer
-from .permissions import ReadOnlyOrCurrentUser, ReadOnlyOrCurrentUserRelationship
+from api.users.serializers import (UserSerializer, UserCreateSerializer,
+    UserAddonSettingsSerializer, UserDetailSerializer, UserInstitutionsRelationshipSerializer)
+from api.users.permissions import ReadOnlyOrCurrentUser, ReadOnlyOrCurrentUserRelationship, CurrentUser
 
 
 class UserMixin(object):
-    """Mixin with convenience methods for retrieving the current node based on the
+    """Mixin with convenience methods for retrieving the current user based on the
     current URL. By default, fetches the user based on the user_id kwarg.
     """
 
@@ -49,8 +53,8 @@ class UserMixin(object):
         return obj
 
 
-class UserList(JSONAPIBaseView, generics.ListAPIView, ODMFilterMixin):
-    """List of users registered on the OSF. *Read-only*.
+class UserList(JSONAPIBaseView, generics.ListCreateAPIView, ODMFilterMixin):
+    """List of users registered on the OSF.
 
     Paginated list of users ordered by the date they registered.  Each resource contains the full representation of the
     user, meaning additional requests to an individual user's detail view are not necessary.
@@ -67,7 +71,7 @@ class UserList(JSONAPIBaseView, generics.ListAPIView, ODMFilterMixin):
     OSF User entities have the "users" `type`.
 
         name               type               description
-        ----------------------------------------------------------------------------------------
+        ========================================================================================
         full_name          string             full name of the user; used for display
         given_name         string             given name of the user; for bibliographic citations
         middle_names       string             middle name of user; for bibliographic citations
@@ -99,11 +103,12 @@ class UserList(JSONAPIBaseView, generics.ListAPIView, ODMFilterMixin):
     """
     permission_classes = (
         drf_permissions.IsAuthenticatedOrReadOnly,
+        base_permissions.RequiresScopedRequestOrReadOnly,
         base_permissions.TokenHasScope,
     )
 
     required_read_scopes = [CoreScopes.USERS_READ]
-    required_write_scopes = [CoreScopes.USERS_WRITE]
+    required_write_scopes = [CoreScopes.USERS_CREATE]
 
     serializer_class = UserSerializer
 
@@ -119,11 +124,18 @@ class UserList(JSONAPIBaseView, generics.ListAPIView, ODMFilterMixin):
             Q('date_disabled', 'eq', None)
         )
 
-    # overrides ListAPIView
+    # overrides ListCreateAPIView
     def get_queryset(self):
         # TODO: sort
         query = self.get_query_from_request()
         return User.find(query)
+
+    # overrides ListCreateAPIView
+    def get_serializer_class(self):
+        if self.request.method == 'POST':
+            return UserCreateSerializer
+        else:
+            return UserSerializer
 
 
 class UserDetail(JSONAPIBaseView, generics.RetrieveUpdateAPIView, UserMixin):
@@ -141,7 +153,7 @@ class UserDetail(JSONAPIBaseView, generics.RetrieveUpdateAPIView, UserMixin):
     OSF User entities have the "users" `type`.
 
         name               type               description
-        ----------------------------------------------------------------------------------------
+        ========================================================================================
         full_name          string             full name of the user; used for display
         given_name         string             given name of the user; for bibliographic citations
         middle_names       string             middle name of user; for bibliographic citations
@@ -228,13 +240,197 @@ class UserDetail(JSONAPIBaseView, generics.RetrieveUpdateAPIView, UserMixin):
         return context
 
 
+class UserAddonList(JSONAPIBaseView, generics.ListAPIView, ListFilterMixin, UserMixin):
+    """List of addons authorized by this user *Read-only*
+
+    Paginated list of user addons ordered by their `id` or `addon_short_name`.
+
+    ###Permissions
+
+    <Addon>UserSettings are visible only to the user that "owns" them.
+
+    ## <Addon\>UserSettings Attributes
+
+    OSF <Addon\>UserSettings entities have the "user_addons" `type`, and their `id` indicates the addon
+    service provider (eg. `box`, `googledrive`, etc).
+
+        name                type        description
+        =====================================================================================
+        user_has_auth       boolean     does this user have access to use an ExternalAccount?
+
+    ##Links
+
+    See the [JSON-API spec regarding pagination](http://jsonapi.org/format/1.0/#fetching-pagination).
+
+        self:  the canonical api endpoint of this user_addon
+        accounts: dict keyed on an external_account_id
+            nodes_connected:    list of canonical api endpoints of connected nodes
+            account:            canonical api endpoint for this account
+
+    #This Request/Response
+    """
+    permission_classes = (
+        drf_permissions.IsAuthenticatedOrReadOnly,
+        base_permissions.TokenHasScope,
+        CurrentUser,
+    )
+
+    required_read_scopes = [CoreScopes.USER_ADDON_READ]
+    required_write_scopes = [CoreScopes.NULL]
+
+    serializer_class = UserAddonSettingsSerializer
+    view_category = 'users'
+    view_name = 'user-addons'
+
+    def get_queryset(self):
+        qs = [addon for addon in self.get_user().get_addons() if 'accounts' in addon.config.configs]
+        qs.sort()
+        return qs
+
+
+class UserAddonDetail(JSONAPIBaseView, generics.RetrieveAPIView, UserMixin, AddonSettingsMixin):
+    """Detail of an individual addon authorized by this user *Read-only*
+
+    ##Permissions
+
+    <Addon>UserSettings are visible only to the user that "owns" them.
+
+    ## <Addon\>UserSettings Attributes
+
+    OSF <Addon\>UserSettings entities have the "user_addons" `type`, and their `id` indicates the addon
+    service provider (eg. `box`, `googledrive`, etc).
+
+        name                type        description
+        =====================================================================================
+        user_has_auth       boolean     does this user have access to use an ExternalAccount?
+
+    ##Links
+
+    See the [JSON-API spec regarding pagination](http://jsonapi.org/format/1.0/#fetching-pagination).
+
+        self:  the canonical api endpoint of this user_addon
+        accounts: dict keyed on an external_account_id
+            nodes_connected:    list of canonical api endpoints of connected nodes
+            account:            canonical api endpoint for this account
+
+    #This Request/Response
+    """
+    permission_classes = (
+        drf_permissions.IsAuthenticatedOrReadOnly,
+        base_permissions.TokenHasScope,
+        CurrentUser,
+    )
+
+    required_read_scopes = [CoreScopes.USER_ADDON_READ]
+    required_write_scopes = [CoreScopes.NULL]
+
+    serializer_class = UserAddonSettingsSerializer
+    view_category = 'users'
+    view_name = 'user-addon-detail'
+
+    def get_object(self):
+        return self.get_addon_settings()
+
+
+class UserAddonAccountList(JSONAPIBaseView, generics.ListAPIView, UserMixin, AddonSettingsMixin):
+    """List of an external_accounts authorized by this user *Read-only*
+
+    ##Permissions
+
+    ExternalAccounts are visible only to the user that has ownership of them.
+
+    ## ExternalAccount Attributes
+
+    OSF ExternalAccount entities have the "external_accounts" `type`, with `id` indicating the
+    `external_account_id` according to the OSF
+
+        name            type        description
+        =====================================================================================================
+        display_name    string      Display name on the third-party service
+        profile_url     string      Link to users profile on third-party service *presence varies by service*
+        provider        string      short_name of third-party service provider
+
+    ##Links
+
+    See the [JSON-API spec regarding pagination](http://jsonapi.org/format/1.0/#fetching-pagination).
+
+        self:  the canonical api endpoint of this external_account
+
+    #This Request/Response
+    """
+    permission_classes = (
+        drf_permissions.IsAuthenticatedOrReadOnly,
+        base_permissions.TokenHasScope,
+        CurrentUser,
+    )
+
+    required_read_scopes = [CoreScopes.USER_ADDON_READ]
+    required_write_scopes = [CoreScopes.NULL]
+
+    serializer_class = AddonAccountSerializer
+    view_category = 'users'
+    view_name = 'user-external_accounts'
+
+    def get_queryset(self):
+        return self.get_addon_settings().external_accounts
+
+class UserAddonAccountDetail(JSONAPIBaseView, generics.RetrieveAPIView, UserMixin, AddonSettingsMixin):
+    """Detail of an individual external_account authorized by this user *Read-only*
+
+    ##Permissions
+
+    ExternalAccounts are visible only to the user that has ownership of them.
+
+    ## ExternalAccount Attributes
+
+    OSF ExternalAccount entities have the "external_accounts" `type`, with `id` indicating the
+    `external_account_id` according to the OSF
+
+        name            type        description
+        =====================================================================================================
+        display_name    string      Display name on the third-party service
+        profile_url     string      Link to users profile on third-party service *presence varies by service*
+        provider        string      short_name of third-party service provider
+
+    ##Links
+
+    See the [JSON-API spec regarding pagination](http://jsonapi.org/format/1.0/#fetching-pagination).
+
+        self:  the canonical api endpoint of this external_account
+
+    #This Request/Response
+    """
+    permission_classes = (
+        drf_permissions.IsAuthenticatedOrReadOnly,
+        base_permissions.TokenHasScope,
+        CurrentUser,
+    )
+
+    required_read_scopes = [CoreScopes.USER_ADDON_READ]
+    required_write_scopes = [CoreScopes.NULL]
+
+    serializer_class = AddonAccountSerializer
+    view_category = 'users'
+    view_name = 'user-external_account-detail'
+
+    def get_object(self):
+        user_settings = self.get_addon_settings()
+        account_id = self.kwargs['account_id']
+
+        account = ExternalAccount.load(account_id)
+        if not (account and account in user_settings.external_accounts):
+            raise NotFound('Requested addon unavailable')
+        return account
+
+
 class UserNodes(JSONAPIBaseView, generics.ListAPIView, UserMixin, ODMFilterMixin):
     """List of nodes that the user contributes to. *Read-only*.
 
-    Paginated list of nodes that the user contributes to.  Each resource contains the full representation of the node,
-    meaning additional requests to an individual node's detail view are not necessary. If the user id in the path is the
-    same as the logged-in user, all nodes will be visible.  Otherwise, you will only be able to see the other user's
-    publicly-visible nodes.  The special user id `me` can be used to represent the currently logged-in user.
+    Paginated list of nodes that the user contributes to ordered by `date_modified`.  User registrations are not available
+    at this endpoint. Each resource contains the full representation of the node, meaning additional requests to an individual
+    node's detail view are not necessary. If the user id in the path is the same as the logged-in user, all nodes will be
+    visible.  Otherwise, you will only be able to see the other user's publicly-visible nodes.  The special user id `me`
+    can be used to represent the currently logged-in user.
 
     ##Node Attributes
 
@@ -242,19 +438,20 @@ class UserNodes(JSONAPIBaseView, generics.ListAPIView, UserMixin, ODMFilterMixin
 
     OSF Node entities have the "nodes" `type`.
 
-        name           type               description
-        ---------------------------------------------------------------------------------
-        title          string             title of project or component
-        description    string             description of the node
-        category       string             node category, must be one of the allowed values
-        date_created   iso8601 timestamp  timestamp that the node was created
-        date_modified  iso8601 timestamp  timestamp when the node was last updated
-        tags           array of strings   list of tags that describe the node
-        fork           boolean            is this project a fork?
-        registration   boolean            has this project been registered?
-        fork           boolean            is this node a fork of another node?
-        dashboard      boolean            is this node visible on the user dashboard?
-        public         boolean            has this node been made publicly-visible?
+        name                            type               description
+        =================================================================================
+        title                           string             title of project or component
+        description                     string             description of the node
+        category                        string             node category, must be one of the allowed values
+        date_created                    iso8601 timestamp  timestamp that the node was created
+        date_modified                   iso8601 timestamp  timestamp when the node was last updated
+        tags                            array of strings   list of tags that describe the node
+        current_user_can_comment        boolean            Whether the current user is allowed to post comments
+        current_user_permissions        array of strings   list of strings representing the permissions for the current user on this node
+        registration                    boolean            is this a registration? (always false - may be deprecated in future versions)
+        fork                            boolean            is this node a fork of another node?
+        public                          boolean            has this node been made publicly-visible?
+        collection                      boolean            is this a collection? (always false - may be deprecated in future versions)
 
     ##Links
 
@@ -272,10 +469,11 @@ class UserNodes(JSONAPIBaseView, generics.ListAPIView, UserMixin, ODMFilterMixin
 
     <!--- Copied Query Params from NodeList -->
 
-    Nodes may be filtered by their `title`, `category`, `description`, `public`, `registration`, or `tags`.  `title`,
-    `description`, and `category` are string fields and will be filtered using simple substring matching.  `public` and
-    `registration` are booleans, and can be filtered using truthy values, such as `true`, `false`, `0`, or `1`.  Note
-    that quoting `true` or `false` in the query will cause the match to fail regardless.  `tags` is an array of simple strings.
+    Nodes may be filtered by their `id`, `title`, `category`, `description`, `public`, `tags`, `date_created`, `date_modified`,
+    `root`, `parent`, and `contributors`.  Most are string fields and will be filtered using simple substring matching.  `public`
+    is a boolean, and can be filtered using truthy values, such as `true`, `false`, `0`, or `1`.  Note that quoting `true`
+    or `false` in the query will cause the match to fail regardless.  `tags` is an array of simple strings.
+
 
     #This Request/Response
 
@@ -292,26 +490,19 @@ class UserNodes(JSONAPIBaseView, generics.ListAPIView, UserMixin, ODMFilterMixin
     view_category = 'users'
     view_name = 'user-nodes'
 
+    ordering = ('-date_modified',)
+
     # overrides ODMFilterMixin
     def get_default_odm_query(self):
         user = self.get_user()
-        return (
-            Q('contributors', 'eq', user) &
-            Q('is_folder', 'ne', True) &
-            Q('is_deleted', 'ne', True)
-        )
+        query = Q('contributors', 'eq', user) & default_node_list_query()
+        if user != self.request.user:
+            query &= default_node_permission_query(self.request.user)
+        return query
 
     # overrides ListAPIView
     def get_queryset(self):
-        current_user = self.request.user
-        if current_user.is_anonymous():
-            auth = Auth(None)
-        else:
-            auth = Auth(current_user)
-        query = self.get_query_from_request()
-        raw_nodes = Node.find(self.get_default_odm_query() & query)
-        nodes = [each for each in raw_nodes if each.is_public or each.can_view(auth)]
-        return nodes
+        return Node.find(self.get_query_from_request())
 
 
 class UserInstitutions(JSONAPIBaseView, generics.ListAPIView, UserMixin):
@@ -342,8 +533,12 @@ class UserRegistrations(UserNodes):
     registration, meaning additional requests to an individual registration's detail view are not necessary. If the user
     id in the path is the same as the logged-in user, all nodes will be visible.  Otherwise, you will only be able to
     see the other user's publicly-visible nodes.  The special user id `me` can be used to represent the currently
-    logged-in user. Retracted registrations will display a limited number of fields, namely, title, description,
-    date_created, registration, retracted, date_registered, retraction_justification, and registration supplement.
+    logged-in user.
+
+    A withdrawn registration will display a limited subset of information, namely, title, description,
+    date_created, registration, withdrawn, date_registered, withdrawal_justification, and registration supplement. All
+    other fields will be displayed as null. Additionally, the only relationships permitted to be accessed for a withdrawn
+    registration are the contributors - other relationships will return a 403.
 
     ##Registration Attributes
 
@@ -352,23 +547,26 @@ class UserRegistrations(UserNodes):
     Registrations have the "registrations" `type`.
 
         name                            type               description
-        -------------------------------------------------------------------------------------------------------
+        =======================================================================================================
         title                           string             title of the registered project or component
         description                     string             description of the registered node
-        category                        string             node category, must be one of the allowed values
+        category                        string             bode category, must be one of the allowed values
         date_created                    iso8601 timestamp  timestamp that the node was created
         date_modified                   iso8601 timestamp  timestamp when the node was last updated
         tags                            array of strings   list of tags that describe the registered node
+        current_user_can_comment        boolean            Whether the current user is allowed to post comments
+        current_user_permissions        array of strings   list of strings representing the permissions for the current user on this node
         fork                            boolean            is this project a fork?
-        registration                    boolean            has this project been registered?
-        dashboard                       boolean            is this registered node visible on the user dashboard?
+        registration                    boolean            has this project been registered? (always true - may be deprecated in future versions)
+        collection                      boolean            is this registered node a collection? (always false - may be deprecated in future versions)
         public                          boolean            has this registration been made publicly-visible?
-        retracted                       boolean            has this registration been retracted?
+        withdrawn                       boolean            has this registration been withdrawn?
         date_registered                 iso8601 timestamp  timestamp that the registration was created
-        retraction_justification        string             reasons for retracting the registration
-        pending_retraction              boolean            is this registration pending retraction?
-        pending_registration_approval   boolean            is this registration pending approval?
-        pending_embargo                 boolean            is this registration pending an embargo?
+        embargo_end_date                iso8601 timestamp  when the embargo on this registration will be lifted (if applicable)
+        withdrawal_justification        string             reasons for withdrawing the registration
+        pending_withdrawal              boolean            is this registration pending withdrawal?
+        pending_withdrawal_approval     boolean            is this registration pending approval?
+        pending_embargo_approval        boolean            is the associated Embargo awaiting approval by project admins?
         registered_meta                 dictionary         registration supplementary information
         registration_supplement         string             registration template
 
@@ -403,10 +601,10 @@ class UserRegistrations(UserNodes):
 
     <!--- Copied Query Params from NodeList -->
 
-    Registrations may be filtered by their `title`, `category`, `description`, `public`, or `tags`.  `title`, `description`,
-    and `category` are string fields and will be filtered using simple substring matching.  `public` is a boolean and
-    can be filtered using truthy values, such as `true`, `false`, `0`, or `1`.  Note that quoting `true` or `false` in
-    the query will cause the match to fail regardless.  `tags` is an array of simple strings.
+     Registrations may be filtered by their `id`, `title`, `category`, `description`, `public`, `tags`, `date_created`, `date_modified`,
+    `root`, `parent`, and `contributors`.  Most are string fields and will be filtered using simple substring matching.  `public`
+    is a boolean, and can be filtered using truthy values, such as `true`, `false`, `0`, or `1`.  Note that quoting `true`
+    or `false` in the query will cause the match to fail regardless.  `tags` is an array of simple strings.
 
     #This Request/Response
 
@@ -421,12 +619,19 @@ class UserRegistrations(UserNodes):
     # overrides ODMFilterMixin
     def get_default_odm_query(self):
         user = self.get_user()
-        return (
-            Q('contributors', 'eq', user) &
-            Q('is_folder', 'ne', True) &
+        current_user = self.request.user
+
+        query = (
+            Q('is_collection', 'ne', True) &
             Q('is_deleted', 'ne', True) &
-            Q('is_registration', 'eq', True)
+            Q('is_registration', 'eq', True) &
+            Q('contributors', 'eq', user._id)
         )
+        permission_query = Q('is_public', 'eq', True)
+        if not current_user.is_anonymous():
+            permission_query = (permission_query | Q('contributors', 'eq', current_user._id))
+        query = query & permission_query
+        return query
 
 
 class UserInstitutionsRelationship(JSONAPIBaseView, generics.RetrieveDestroyAPIView, UserMixin):

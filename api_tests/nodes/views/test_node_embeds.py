@@ -47,12 +47,20 @@ class TestNodeEmbeds(ApiTestCase):
         embeds = res.json['data']['embeds']
         assert_equal(embeds['parent']['data']['id'], self.root_node._id)
 
+    def test_embed_no_parent(self):
+        url = '/{0}nodes/{1}/?embed=parent'.format(API_BASE, self.root_node._id)
+
+        res = self.app.get(url, auth=self.user.auth)
+        data = res.json['data']
+        assert_not_in('embeds', data)
+
     def test_embed_contributors(self):
         url = '/{0}nodes/{1}/?embed=contributors'.format(API_BASE, self.child1._id)
 
         res = self.app.get(url, auth=self.user.auth)
         embeds = res.json['data']['embeds']
         ids = [c._id for c in self.contribs] + [self.user._id]
+        ids = ['{}-{}'.format(self.child1._id, id_) for id_ in ids]
         for contrib in embeds['contributors']['data']:
             assert_in(contrib['id'], ids)
 

@@ -348,7 +348,13 @@ describe('osfHelpers', () => {
             var dateString = [year, month, day].join('-');
             var dateTimeString = dateString + 'T' + [hour, minute, second].join(':') + '.' + millisecond.toString();
 
-            var assertDateEqual = function(date, year, month, day, hour, minute, second, millisecond) {
+            var assertDateEqual = function(date, year, month, day) {
+                assert.equal(date.getUTCFullYear(), year);
+                assert.equal(date.getUTCMonth(), month - 1); // Javascript months count from 0
+                assert.equal(date.getUTCDate(), day);
+            };
+
+            var assertDateTimeEqual = function(date, year, month, day, hour, minute, second, millisecond) {
                 assert.equal(date.getUTCFullYear(), year);
                 assert.equal(date.getUTCMonth(), month - 1); // Javascript months count from 0
                 assert.equal(date.getUTCDate(), day);
@@ -369,20 +375,19 @@ describe('osfHelpers', () => {
         });
         it('should parse date strings', () => {
             var parsedDate = new $osf.FormattableDate(dateString).date;
-            var parsedDateTime = new $osf.FormattableDate(dateTimeString).date;
-            assertDateEqual(parsedDate, year, month, day, 0, 0, 0, 0);
+            assertDateEqual(parsedDate, year, month, day);
         });
         it('should parse datetime strings', () => {
             var parsedDateTime = new $osf.FormattableDate(dateTimeString).date;
-            assertDateEqual(parsedDateTime, year, month, day, hour, minute, second, millisecond);
+            assertDateTimeEqual(parsedDateTime, year, month, day, hour, minute, second, millisecond);
         });
         it('should allow datetimes with UTC offsets', () => {
             var parsedDateTime = null;
-            var UTCOffsets = ['+00', '+00:00', '+0000', 'Z'];
+            var UTCOffsets = ['+00', '-00', '+00:00', '-00:00', '+0000', '-0000', 'Z'];
 
             UTCOffsets.forEach(function(offset) {
                 parsedDateTime = new $osf.FormattableDate(dateTimeString + offset).date;
-                assertDateEqual(parsedDateTime, year, month, day, hour, minute, second, millisecond);
+                assertDateTimeEqual(parsedDateTime, year, month, day, hour, minute, second, millisecond);
             });
         });
         it('should allow datetimes with positive offsets', () => {
@@ -390,7 +395,7 @@ describe('osfHelpers', () => {
             var positiveOffset = '+02:00';
 
             parsedDateTime = new $osf.FormattableDate(dateTimeString + positiveOffset).date;
-            assertDateEqual(parsedDateTime, year, month, day, hour - 2, minute, second, millisecond);
+            assertDateTimeEqual(parsedDateTime, year, month, day, hour - 2, minute, second, millisecond);
 
         });
         it('should allow datetimes with negative offsets', () => {
@@ -398,7 +403,7 @@ describe('osfHelpers', () => {
             var negativeOffset = '-02:00';
 
             parsedDateTime = new $osf.FormattableDate(dateTimeString + negativeOffset).date;
-            assertDateEqual(parsedDateTime, year, month, day, hour + 2, minute, second, millisecond);
+            assertDateTimeEqual(parsedDateTime, year, month, day, hour + 2, minute, second, millisecond);
         });
     });
 
@@ -468,7 +473,7 @@ describe('osfHelpers', () => {
             assert.equal(-1, found);
         });
     });
-    
+
     describe('any', () => {
         it('returns true if any of the values in an array are truthy', () => {
             var TRUTHY = [true, {}, [], 42, 'foo', new Date()];
@@ -486,7 +491,23 @@ describe('osfHelpers', () => {
         it('returns false if the array is empty', () => {
             assert.isFalse(
                 $osf.any([])
-            );            
+            );
+        });
+    });
+
+    describe('getDomain', () => {
+        it('uses http for localhost domains', () => {
+            var location = {hostname: 'localhost', port: '5000'};
+            assert.equal($osf.getDomain(location), 'http://localhost:5000');
+        });
+
+        it('uses https for non-localhost domains', () => {
+            var location = {hostname: 'osf.test', port: '5000'};
+            assert.equal($osf.getDomain(location), 'https://osf.test:5000');
+        });
+
+        it('uses window.location if object not passed', () => {
+            assert.include($osf.getDomain(), 'http');
         });
     });
 });

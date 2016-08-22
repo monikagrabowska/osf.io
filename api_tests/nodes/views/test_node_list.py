@@ -12,13 +12,12 @@ from api.base.settings.defaults import API_BASE, MAX_PAGE_SIZE
 
 from tests.base import ApiTestCase
 from tests.factories import (
-    DashboardFactory,
-    FolderFactory,
+    BookmarkCollectionFactory,
+    CollectionFactory,
     ProjectFactory,
     RegistrationFactory,
     AuthUserFactory,
     UserFactory,
-    RetractedRegistrationFactory
 )
 
 
@@ -90,14 +89,6 @@ class TestNodeList(ApiTestCase):
         ids = [each['id'] for each in res.json['data']]
         assert_not_in(registration._id, ids)
 
-    def test_omit_retracted_registration(self):
-        registration = RegistrationFactory(creator=self.user, project=self.public)
-        res = self.app.get(self.url, auth=self.user.auth)
-        assert_equal(len(res.json['data']), 2)
-        retraction = RetractedRegistrationFactory(registration=registration, user=registration.creator)
-        res = self.app.get(self.url, auth=self.user.auth)
-        assert_equal(len(res.json['data']), 2)
-
     def test_node_list_has_root(self):
         res = self.app.get(self.url, auth=self.user.auth)
         projects_with_root = 0
@@ -139,8 +130,8 @@ class TestNodeFiltering(ApiTestCase):
         self.private_project_user_two = ProjectFactory(title="Private Project User Two",
                                                        is_public=False,
                                                        creator=self.user_two)
-        self.folder = FolderFactory()
-        self.dashboard = DashboardFactory()
+        self.folder = CollectionFactory()
+        self.bookmark_collection = BookmarkCollectionFactory()
 
         self.url = "/{}nodes/".format(API_BASE)
 
@@ -269,7 +260,7 @@ class TestNodeFiltering(ApiTestCase):
         assert_in(self.private_project_user_one._id, ids)
         assert_not_in(self.private_project_user_two._id, ids)
         assert_not_in(self.folder._id, ids)
-        assert_not_in(self.dashboard._id, ids)
+        assert_not_in(self.bookmark_collection._id, ids)
 
     def test_get_all_projects_with_no_filter_not_logged_in(self):
         res = self.app.get(self.url)
@@ -281,7 +272,7 @@ class TestNodeFiltering(ApiTestCase):
         assert_not_in(self.private_project_user_one._id, ids)
         assert_not_in(self.private_project_user_two._id, ids)
         assert_not_in(self.folder._id, ids)
-        assert_not_in(self.dashboard._id, ids)
+        assert_not_in(self.bookmark_collection._id, ids)
 
     def test_get_one_project_with_exact_filter_logged_in(self):
         url = "/{}nodes/?filter[title]=Project%20One".format(API_BASE)
@@ -296,7 +287,7 @@ class TestNodeFiltering(ApiTestCase):
         assert_not_in(self.private_project_user_one._id, ids)
         assert_not_in(self.private_project_user_two._id, ids)
         assert_not_in(self.folder._id, ids)
-        assert_not_in(self.dashboard._id, ids)
+        assert_not_in(self.bookmark_collection._id, ids)
 
     def test_get_one_project_with_exact_filter_not_logged_in(self):
         url = "/{}nodes/?filter[title]=Project%20One".format(API_BASE)
@@ -311,7 +302,7 @@ class TestNodeFiltering(ApiTestCase):
         assert_not_in(self.private_project_user_one._id, ids)
         assert_not_in(self.private_project_user_two._id, ids)
         assert_not_in(self.folder._id, ids)
-        assert_not_in(self.dashboard._id, ids)
+        assert_not_in(self.bookmark_collection._id, ids)
 
     def test_get_some_projects_with_substring_logged_in(self):
         url = "/{}nodes/?filter[title]=Two".format(API_BASE)
@@ -326,7 +317,7 @@ class TestNodeFiltering(ApiTestCase):
         assert_not_in(self.private_project_user_one._id, ids)
         assert_not_in(self.private_project_user_two._id, ids)
         assert_not_in(self.folder._id, ids)
-        assert_not_in(self.dashboard._id, ids)
+        assert_not_in(self.bookmark_collection._id, ids)
 
     def test_get_some_projects_with_substring_not_logged_in(self):
         url = "/{}nodes/?filter[title]=Two".format(API_BASE)
@@ -341,7 +332,7 @@ class TestNodeFiltering(ApiTestCase):
         assert_not_in(self.private_project_user_one._id, ids)
         assert_not_in(self.private_project_user_two._id, ids)
         assert_not_in(self.folder._id, ids)
-        assert_not_in(self.dashboard._id, ids)
+        assert_not_in(self.bookmark_collection._id, ids)
 
     def test_get_only_public_or_my_projects_with_filter_logged_in(self):
         url = "/{}nodes/?filter[title]=Project".format(API_BASE)
@@ -356,7 +347,7 @@ class TestNodeFiltering(ApiTestCase):
         assert_in(self.private_project_user_one._id, ids)
         assert_not_in(self.private_project_user_two._id, ids)
         assert_not_in(self.folder._id, ids)
-        assert_not_in(self.dashboard._id, ids)
+        assert_not_in(self.bookmark_collection._id, ids)
 
     def test_get_only_public_projects_with_filter_not_logged_in(self):
         url = "/{}nodes/?filter[title]=Project".format(API_BASE)
@@ -371,7 +362,7 @@ class TestNodeFiltering(ApiTestCase):
         assert_not_in(self.private_project_user_one._id, ids)
         assert_not_in(self.private_project_user_two._id, ids)
         assert_not_in(self.folder._id, ids)
-        assert_not_in(self.dashboard._id, ids)
+        assert_not_in(self.bookmark_collection._id, ids)
 
     def test_alternate_filtering_field_logged_in(self):
         url = "/{}nodes/?filter[description]=Three".format(API_BASE)
@@ -386,7 +377,7 @@ class TestNodeFiltering(ApiTestCase):
         assert_not_in(self.private_project_user_one._id, ids)
         assert_not_in(self.private_project_user_two._id, ids)
         assert_not_in(self.folder._id, ids)
-        assert_not_in(self.dashboard._id, ids)
+        assert_not_in(self.bookmark_collection._id, ids)
 
     def test_alternate_filtering_field_not_logged_in(self):
         url = "/{}nodes/?filter[description]=Three".format(API_BASE)
@@ -401,7 +392,7 @@ class TestNodeFiltering(ApiTestCase):
         assert_not_in(self.private_project_user_one._id, ids)
         assert_not_in(self.private_project_user_two._id, ids)
         assert_not_in(self.folder._id, ids)
-        assert_not_in(self.dashboard._id, ids)
+        assert_not_in(self.bookmark_collection._id, ids)
 
     def test_incorrect_filtering_field_not_logged_in(self):
         url = '/{}nodes/?filter[notafield]=bogus'.format(API_BASE)
@@ -641,6 +632,28 @@ class TestNodeCreate(ApiTestCase):
         assert_equal(res.json['data']['attributes']['description'], strip_html(description))
         assert_equal(res.json['data']['attributes']['category'], self.category)
 
+    def test_create_component_inherit_contributors(self):
+        parent_project = ProjectFactory(creator=self.user_one)
+        parent_project.add_contributor(self.user_two, permissions=[permissions.READ], save=True)
+        url = '/{}nodes/{}/children/?inherit_contributors=true'.format(API_BASE, parent_project._id)
+        component_data = {
+            'data': {
+                'type': 'nodes',
+                'attributes': {
+                    'title': self.title,
+                    'category': self.category,
+                }
+            }
+        }
+        res = self.app.post_json_api(url, component_data, auth=self.user_one.auth)
+        assert_equal(res.status_code, 201)
+        json_data = res.json['data']
+
+        new_component_id = json_data['id']
+        new_component = Node.load(new_component_id)
+        assert_equal(len(new_component.contributors), 2)
+        assert_equal(len(new_component.contributors), len(parent_project.contributors))
+
     def test_creates_project_no_type(self):
         project = {
             'data': {
@@ -671,7 +684,7 @@ class TestNodeCreate(ApiTestCase):
         }
         res = self.app.post_json_api(self.url, project, auth=self.user_one.auth, expect_errors=True)
         assert_equal(res.status_code, 409)
-        assert_equal(res.json['errors'][0]['detail'], 'Resource identifier does not match server endpoint.')
+        assert_equal(res.json['errors'][0]['detail'], 'This resource has a type of "nodes", but you set the json body\'s type field to "Wrong type.". You probably need to change the type field to match the resource\'s type.')
 
     def test_creates_project_properties_not_nested(self):
         project = {
@@ -1556,7 +1569,42 @@ class TestNodeBulkDelete(ApiTestCase):
         self.private_project_url = "/{}nodes/{}/".format(API_BASE, self.private_project_user_one._id)
 
         self.public_payload = {'data': [{'id': self.project_one._id, 'type': 'nodes'}, {'id': self.project_two._id, 'type': 'nodes'}]}
+        self.public_query_params = 'id={},{}'.format(self.project_one._id, self.project_two._id)
+        self.type_query_param = 'type=nodes'
         self.private_payload = {'data': [{'id': self.private_project_user_one._id, 'type': 'nodes'}]}
+        self.private_query_params = 'id={}'.format(self.private_project_user_one._id)
+
+    def test_bulk_delete_with_query_params(self):
+        url = '{}?{}&{}'.format(self.url, self.type_query_param, self.public_query_params)
+        res = self.app.delete_json_api(url, auth=self.user_one.auth, bulk=True)
+        assert_equal(res.status_code, 204)
+
+    def test_bulk_delete_with_query_params_and_payload(self):
+        url = '{}?{}&{}'.format(self.url, self.type_query_param, self.public_query_params)
+        res = self.app.delete_json_api(url, self.public_payload, auth=self.user_one.auth, expect_errors=True, bulk=True)
+        assert_equal(res.status_code, 409)
+        assert_equal(
+            res.json['errors'][0]['detail'],
+            u'A bulk DELETE can only have a body or query parameters, not both.'
+        )
+
+    def test_bulk_delete_with_query_params_no_type(self):
+        url = '{}?{}'.format(self.url, self.public_query_params)
+        res = self.app.delete_json_api(url, auth=self.user_one.auth, expect_errors=True, bulk=True)
+        assert_equal(res.status_code, 400)
+        assert_equal(
+            res.json['errors'][0]['detail'],
+            u'Type query parameter is also required for a bulk DELETE using query parameters.'
+        )
+
+    def test_bulk_delete_with_query_params_wrong_type(self):
+        url = '{}?{}&{}'.format(self.url, self.public_query_params, "type=node_not_nodes")
+        res = self.app.delete_json_api(url, auth=self.user_one.auth, expect_errors=True, bulk=True)
+        assert_equal(res.status_code, 409)
+        assert_equal(
+            res.json['errors'][0]['detail'],
+            u'Type needs to match type expected at this endpoint.'
+        )
 
     def test_bulk_delete_nodes_blank_request(self):
         res = self.app.delete_json_api(self.url, auth=self.user_one.auth, expect_errors=True, bulk=True)
@@ -1788,7 +1836,7 @@ class TestNodeListPagination(ApiTestCase):
         # Ordered by date modified: oldest first
         self.users = [UserFactory() for _ in range(11)]
         self.projects = [ProjectFactory(is_public=True, creator=self.users[0]) for _ in range(11)]
-        
+
         self.url = '/{}nodes/'.format(API_BASE)
 
     def tearDown(self):
@@ -1824,6 +1872,8 @@ class TestNodeListPagination(ApiTestCase):
 
         uids = [e['id'] for e in res.json['data'][0]['embeds']['contributors']['data']]
         for user in self.users[:9]:
-            assert_in(user._id, uids)
-        assert_not_in(self.users[10]._id, uids)
+            contrib_id = '{}-{}'.format(res.json['data'][0]['id'], user._id)
+            assert_in(contrib_id, uids)
+
+        assert_not_in('{}-{}'.format(res.json['data'][0]['id'], self.users[10]._id), uids)
         assert_equal(res.json['data'][0]['embeds']['contributors']['links']['meta']['per_page'], 10)

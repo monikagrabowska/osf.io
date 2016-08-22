@@ -1,15 +1,26 @@
-﻿// OSF Note: This file has been changed for UI reasons, to prevent
+// OSF Note: This file has been changed for UI reasons, to prevent
 // automatic rendering, and to add a checkbox for toggling snippet
 // autocompletion. This is only here for the toolbar
 
 // needs Markdown.Converter.js at the moment
+
 var $ = require('jquery');
 var $osf = require('js/osfHelpers');
 var Range = ace.require('ace/range').Range;
+var Cookie = require('js-cookie');
+
+$(function(){
+    var toggled_off = Cookie.get('spellcheckPersistKey' + window.location.toString()) === '0';
+    if (toggled_off) {
+        document.getElementById('ace_editor_body').innerHTML = '';
+        document.getElementById('ace_editor_line_numbers').innerHTML = '';
+
+    }
+});
 
 (function () {
 
-    
+
     var util = {},
         position = {},
         ui = {},
@@ -29,20 +40,22 @@ var Range = ace.require('ace/range').Range;
     var defaultsStrings = {
         bold: "Strong <strong>",
         boldexample: "strong text",
-        
+
         italic: "Emphasis <em>",
         italicexample: "emphasized text",
-        
+
+        spellcheck: "Spellcheck: Toggle spellcheck on and off",
+
         link: "Hyperlink <a>",
         linkdescription: "enter link description here",
         linkdialog: "<div class='modal-header'> <h4 class='modal-title f-w-lg'>Add hyperlink</h4></div><div class='modal-body'> <p><b>Example:</b><br>http://example.com/ \"optional title\"</p></div>",
-        
+
         quote: "Blockquote <blockquote>",
         quoteexample: "Blockquote",
-        
+
         code: "Code Sample <pre><code>",
         codeexample: "enter code here",
-        
+
         image: "Image <img>",
         imagedescription: "enter image description here",
         imagedialog: "<div class='modal-header'> <h4 class='modal-title f-w-lg'>Add image</h4></div><div class='modal-body'><p><b>Example:</b><br>http://example.com/images/diagram.jpg \"optional title\"</p></div>",
@@ -50,18 +63,18 @@ var Range = ace.require('ace/range').Range;
         olist: "Numbered List <ol>",
         ulist: "Bulleted List <ul>",
         litem: "List item",
-        
+
         heading: "Heading <h1>/<h2>",
         headingexample: "Heading",
-        
+
         hr: "Horizontal Rule <hr>",
-        
+
         undo: "Undo -",
         redo: "Redo -",
-        
-        help: "Markdown Editing Help"
+
+        help: "Wiki Syntax Help"
     };
-    
+
     var keyStrokes = {
         bold: {
             win: 'Ctrl-B',
@@ -110,7 +123,7 @@ var Range = ace.require('ace/range').Range;
         redo: {
             win: 'Ctrl-Y|Ctrl-Shift-Z',
             mac: 'Command-Y|Command-Shift-Z',
-        },
+        }
     };
 
 
@@ -157,7 +170,7 @@ var Range = ace.require('ace/range').Range;
     // - run() actually starts the editor; should be called after all necessary plugins are registered. Calling this more than once is a no-op.
     // - refreshPreview() forces the preview to be updated. This method is only available after run() was called.
     Markdown.Editor = function (markdownConverter, idPostfix, options) {
-        
+
         options = options || {};
 
         if (typeof options.handler === "function") { //backwards compatible behavior
@@ -744,7 +757,7 @@ var Range = ace.require('ace/range').Range;
             //Not necessary
             //saveState();
         };
-        
+
         this.reinit = function(content, start, end, scrollTop) {
             undoStack = [];
             stackPtr = 0;
@@ -810,7 +823,7 @@ var Range = ace.require('ace/range').Range;
             })(inputArea.session.doc.indexToPosition(stateObj.start), inputArea.session.doc.indexToPosition(stateObj.end)));
             inputArea.renderer.scrollToY(stateObj.scrollTop);
             focusNoScroll(inputArea);
-            
+
             /*benweet
             if (!util.isVisible(inputArea)) {
                 return;
@@ -841,10 +854,10 @@ var Range = ace.require('ace/range').Range;
         };
 
         this.setInputAreaSelectionStartEnd = function () {
-            
+
             stateObj.start = stateObj.before.length;
             stateObj.end = stateObj.after.length;
-            
+
             /*benweet
             if (!panels.ieCachedRange && (inputArea.selectionStart || inputArea.selectionStart === 0)) {
 
@@ -896,10 +909,10 @@ var Range = ace.require('ace/range').Range;
         // Restore this state into the input area.
         this.restore = function () {
             // Here we could do editor.setValue but we want to update the less we can for undo management
-            
+
             // Find the first modified char
             var startIndex = 0;
-            var startIndexMax = stateObj.before.length; 
+            var startIndexMax = stateObj.before.length;
             while(startIndex < startIndexMax) {
                 if(stateObj.before.charCodeAt(startIndex) !== stateObj.text.charCodeAt(startIndex))
                     break;
@@ -915,7 +928,7 @@ var Range = ace.require('ace/range').Range;
                     break;
                 endIndex++;
             }
-            
+
             var Range = ace.require('ace/range').Range;
             var range = (function(posStart, posEnd) {
                 return new Range(posStart.row, posStart.column, posEnd.row, posEnd.column);
@@ -1171,9 +1184,9 @@ var Range = ace.require('ace/range').Range;
 
         var background = doc.createElement("div"),
             style = background.style;
-        
+
         background.className = "wmd-prompt-background";
-        
+
         style.position = "absolute";
         style.top = "0";
 
@@ -1402,7 +1415,7 @@ var Range = ace.require('ace/range').Range;
             addKeyCmd(identifierList);
         }
         addKeyCmd(['bold', 'italic', 'link', 'quote', 'code', 'image', 'olist', 'ulist', 'heading', 'hr']);
-        
+
         /*benweet
         util.addEvent(inputBox, keyEvent, function (key) {
 
@@ -1649,6 +1662,22 @@ var Range = ace.require('ace/range').Range;
                 buttonRow.appendChild(button);
                 return button;
             };
+            var makeHelpButton = function(id,title,XShift){
+              var button = document.createElement("li");
+              button.className = "wmd-button";
+              button.setAttribute('data-toggle','modal');
+              button.setAttribute('data-target','#wiki-help-modal');
+              button.style.left = xPosition + "px";
+              xPosition += 25;
+              var buttonImage = document.createElement("span");
+              button.id = id + postfix;
+              button.appendChild(buttonImage);
+              button.title = title;
+              button.XShift = XShift;
+              setupButton(button, true);
+              buttonRow.appendChild(button);
+              return button;
+            }
             var makeCheckBox = function (div_id, cb_id, XShift, text) {
                 var li = document.createElement("li");
                 li.id = div_id;
@@ -1656,8 +1685,8 @@ var Range = ace.require('ace/range').Range;
                 xPosition += 25;
                 li.XShift = XShift;
                 var label = document.createElement("label");
-                label.style.fontWeight = "normal"; 
-                label.style.position =  "relative"; 
+                label.style.fontWeight = "normal";
+                label.style.position =  "relative";
                 label.style.top = "-5px";
                 var cb = document.createElement("input");
                 cb.id = cb_id;
@@ -1680,6 +1709,7 @@ var Range = ace.require('ace/range').Range;
 
             buttons.bold = makeButton("wmd-bold-button", getStringAndKey("bold"), "0px", bindCommand("doBold"));
             buttons.italic = makeButton("wmd-italic-button", getStringAndKey("italic"), "-20px", bindCommand("doItalic"));
+            buttons.spellcheck = makeButton("wmd-spellcheck-button",getString("spellcheck"),"-280px", bindCommand("doMisspelled"));
             makeSpacer(1);
             buttons.link = makeButton("wmd-link-button", getStringAndKey("link"), "-40px", bindCommand(function (chunk, postProcessing) {
                 return this.doLinkOrImage(chunk, postProcessing, false);
@@ -1704,8 +1734,12 @@ var Range = ace.require('ace/range').Range;
 
             buttons.redo = makeButton("wmd-redo-button", getStringAndKey("redo"), "-220px", null);
             buttons.redo.execute = function (manager) { inputBox.session.getUndoManager().redo(); };
+
             makeSpacer(4);
             makeCheckBox("wmd-autocom-toggle", "autocom", "-240px", "Autocomplete");
+
+            makeSpacer(5);
+            buttons.help = makeHelpButton("wmd-help-button",getString("help"),"-240px");
 
             if (helpOptions) {
                 var helpButton = document.createElement("li");
@@ -1772,6 +1806,18 @@ var Range = ace.require('ace/range').Range;
 
     commandProto.doItalic = function (chunk, postProcessing) {
         return this.doBorI(chunk, postProcessing, 1, this.getString("italicexample"));
+    };
+
+    commandProto.doMisspelled = function () {
+        var body_spelling = document.getElementById('ace_editor_body');
+        var line_tag = document.getElementById('ace_editor_line_numbers');
+        body_spelling.innerHTML = body_spelling.innerHTML ? '' : '.ace_marker-layer .misspelled { position: absolute; z-index: -2; border-bottom: 1px dotted red; margin-bottom: -1px; }';
+        line_tag.innerHTML = line_tag.innerHTML ? '' : '.misspelled { border-bottom: 1px dotted red; margin-bottom: -1px; }';
+        if(body_spelling.innerHTML !== ''){
+            Cookie.set('spellcheckPersistKey' + window.location.toString(), '1', { expires: 1, path: '/'});
+        } else{
+            Cookie.set('spellcheckPersistKey' + window.location.toString(), '0', { expires: 1, path: '/'});
+        }
     };
 
     // chunk: The selected region that will be enclosed with */**
@@ -1844,7 +1890,6 @@ var Range = ace.require('ace/range').Range;
         chunk.before = this.stripLinkDefs(chunk.before, defsToAdd);
         chunk.selection = this.stripLinkDefs(chunk.selection, defsToAdd);
         chunk.after = this.stripLinkDefs(chunk.after, defsToAdd);
-
         var defs = "";
         var regex = /(\[)((?:\[[^\]]*\]|[^\[\]])*)(\][ ]?(?:\n[ ]*)?\[)(\d+)(\])/g;
 
@@ -1853,7 +1898,6 @@ var Range = ace.require('ace/range').Range;
             def = def.replace(/^[ ]{0,3}\[(\d+)\]:/, "  [" + refNumber + "]:");
             defs += "\n" + def;
         };
-
         // note that
         // a) the recursive call to getLink cannot go infinite, because by definition
         //    of regex, inner is always a proper substring of wholeMatch, and
@@ -1880,16 +1924,20 @@ var Range = ace.require('ace/range').Range;
         var refOut = refNumber;
 
         chunk.after = chunk.after.replace(regex, getLink);
-
         if (chunk.after) {
+            if (chunk.selection) {
+                chunk.selection = '[' + chunk.selection + '][' + refOut + ']';
+            }
             chunk.after = chunk.after.replace(/\n*$/, "");
         }
-        if (!chunk.after) {
+        else if (!chunk.after) {
+            if (chunk.selection) {
+                chunk.selection = '[' + chunk.selection + '][' + refOut + ']';
+            }
             chunk.selection = chunk.selection.replace(/\n*$/, "");
         }
 
         chunk.after += "\n\n" + defs;
-
         return refOut;
     };
 
@@ -1932,7 +1980,6 @@ var Range = ace.require('ace/range').Range;
             // link text. linkEnteredCallback takes care of escaping any brackets.
             chunk.selection = chunk.startTag + chunk.selection + chunk.endTag;
             chunk.startTag = chunk.endTag = "";
-
             if (/\n\n/.test(chunk.selection)) {
                 this.addLinkDef(chunk, null);
                 return;
@@ -1941,7 +1988,6 @@ var Range = ace.require('ace/range').Range;
             // The function to be executed when you enter a link and press OK or Cancel.
             // Marks up the link and adds the ref.
             var linkEnteredCallback = function (link) {
-
                 if (!!background) {
                     background.parentNode.removeChild(background);
                 }
@@ -1965,6 +2011,7 @@ var Range = ace.require('ace/range').Range;
                     // this by anchoring with ^, because in the case that the selection starts with two brackets, this
                     // would mean a zero-width match at the start. Since zero-width matches advance the string position,
                     // the first bracket could then not act as the "not a backslash" for the second.
+
                     chunk.selection = (" " + chunk.selection).replace(/([^\\](?:\\\\)*)(?=[[\]])/g, "$1\\").substr(1);
 
                     var linkDef;
@@ -1979,8 +2026,8 @@ var Range = ace.require('ace/range').Range;
                             chunk.before += "![" + that.getString("imagedescription") + "][" + num + "]\n";
                         }
                     }
-
                     if (!chunk.selection && !multiple) {
+
                         chunk.startTag = isImage ? "![" : "[";
                         chunk.endTag = "][" + num + "]";
                         if (isImage) {
@@ -2025,7 +2072,7 @@ var Range = ace.require('ace/range').Range;
         chunk.before = chunk.before.replace(/(\n|^)[ ]{0,3}([*+-]|\d+[.])[ \t]*\n$/, "\n\n");
         chunk.before = chunk.before.replace(/(\n|^)[ ]{0,3}>[ \t]*\n$/, "\n\n");
         chunk.before = chunk.before.replace(/(\n|^)[ \t]+\n$/, "\n\n");
-        
+
         // There's no selection, end the cursor wasn't at the end of the line:
         // The user wants to split the current list item / code line / blockquote line
         // (for the latter it doesn't really matter) in two. Temporarily select the
@@ -2053,7 +2100,7 @@ var Range = ace.require('ace/range').Range;
                 commandMgr.doCode(chunk);
             }
         }
-        
+
         if (fakeSelection) {
             chunk.after = chunk.selection + chunk.after;
             chunk.selection = "";
@@ -2146,7 +2193,7 @@ var Range = ace.require('ace/range').Range;
         // end of change
 
         /*benweet Don't really know the purpose of it but it is destructive
-        
+
         if (chunk.after) {
             chunk.after = chunk.after.replace(/^\n?/, "\n");
         }
@@ -2439,6 +2486,5 @@ var Range = ace.require('ace/range').Range;
         chunk.selection = "";
         chunk.skipLines(2, 1, true);
     }
-
 
 })();

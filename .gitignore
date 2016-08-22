@@ -72,9 +72,6 @@ website/gpg/
 webpack-assets.json
 sauce.json
 
-# Built log templates
-website/templates/_log_templates.mako
-
 # Build JS files
 website/static/built/*
 
@@ -98,7 +95,7 @@ scripts/hide_extra_registration_logs.json
 scripts/osfstorage/usage_whitelist.json
 
 # Celery dbs
-celerybeat-schedule.db
+celerybeat-schedule*
 celery_beat.py.db
 
 # Diff (used during merge resolution)
@@ -107,6 +104,10 @@ celery_beat.py.db
 # GUIDS
 scripts/guid_blacklist.txt
 
+# Generated json
+website/static/js/_allLogTexts.json
+website/static/js/_anonymousLogTexts.json
+
 # Admin Specific
 #################
 admin/static/public/
@@ -114,5 +115,14 @@ admin/static/public/
 admin/webpack-stats.json
 # bower
 admin/static/vendor/
-admin/db.sqlite3/
+admin/db.sqlite3
 admin/db.sqlite3-journal
+
+# Celery Beat
+celerybeat-schedule
+celerybeat.pid
+
+# Analytics Output
+website/analytics/
+
+piwik-migration

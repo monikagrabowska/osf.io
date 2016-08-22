@@ -20,24 +20,27 @@
                         </h2>
                     % endif
                 % endif
-                <h2 class="node-title">
-                    % if node['institution']['name'] and enable_institutions:
-                        <img class="img-circle" height="75" width="75" id="instLogo" src="${node['institution']['logo_path']}">
-                    % endif
+
+                % if node['institutions'] != [] and enable_institutions and not node['anonymous']:
+                    <div id="instLogo"></div>
+                % endif
+
+                <h2 class="node-title" style="float: left;">
                     <span id="nodeTitleEditable" class="overflow">${node['title']}</span>
                 </h2>
             </div>
             <div class="col-sm-7 col-md-5">
-                <div class="btn-toolbar node-control pull-right"
-                    % if not user_name:
-                        data-bind="tooltip: {title: 'Log-in or create an account to watch/duplicate this project', placement: 'bottom'}"
-                    % endif
-                        >
+                <div class="btn-toolbar node-control pull-right">
                     <div class="btn-group">
                     % if not node["is_public"]:
-                        <button class='btn btn-default disabled'>Private</button>
-                        % if 'admin' in user['permissions'] and not node['is_pending_registration'] and not node['embargo_end_date']:
-                            <a class="btn btn-default"  href="#nodesPrivacy" data-toggle="modal" >Make Public</a>
+                        <button class="btn btn-default disabled">Private</button>
+                        % if 'admin' in user['permissions'] and not (node['is_pending_registration'] or node['is_pending_embargo']) and not (node['is_embargoed'] and parent_node['exists']):
+                        <a disabled data-bind="attr: {'disabled': false}, css: {'disabled': nodeIsPendingEmbargoTermination}" class="btn btn-default"  href="#nodesPrivacy" data-toggle="modal">
+                          Make Public
+			  <!-- ko if: nodeIsPendingEmbargoTermination -->
+                          <span class="fa fa-info-circle hidden" data-bind="css: {'hidden': false}, tooltip: {title: makePublicTooltip, placement: 'bottom', disabled: true}"></span>
+                          <!-- /ko -->
+                        </a>
                         % endif
                     % else:
                         % if 'admin' in user['permissions'] and not node['is_registration']:
@@ -46,51 +49,43 @@
                         <button class="btn btn-default disabled">Public</button>
                     % endif
                     </div>
+
                     <!-- ko if: canBeOrganized -->
                     <div class="btn-group" style="display: none;" data-bind="visible: true">
 
                         <!-- ko ifnot: inDashboard -->
-                           <a id="addDashboardFolder" data-bind="click: addToDashboard, tooltip: {title: 'Add to dashboard folder',
+                           <a id="addDashboardFolder" data-bind="click: addToDashboard, tooltip: {title: 'Add to bookmarks',
                             placement: 'bottom', container : 'body'}" class="btn btn-default">
-                               <i class="fa fa-folder-open"></i>
+                               <i class="fa fa-bookmark"></i>
                                <i class="fa fa-plus"></i>
                            </a>
                         <!-- /ko -->
                         <!-- ko if: inDashboard -->
-                           <a id="removeDashboardFolder" data-bind="click: removeFromDashboard, tooltip: {title: 'Remove from dashboard folder',
+                           <a id="removeDashboardFolder" data-bind="click: removeFromDashboard, tooltip: {title: 'Remove from bookmarks',
                             placement: 'bottom', container : 'body'}" class="btn btn-default">
-                               <i class="fa fa-folder-open"></i>
+                               <i class="fa fa-bookmark"></i>
                                <i class="fa fa-minus"></i>
                            </a>
                         <!-- /ko -->
 
                     </div>
                     <!-- /ko -->
-                    <div class="btn-group">
-                        <a
-                        % if user_name and (node['is_public'] or user['has_read_permissions']) and not node['is_registration']:
-                            data-bind="click: toggleWatch, tooltip: {title: watchButtonAction, placement: 'bottom', container : 'body'}"
-                            class="btn btn-default" data-container="body"
-                        % else:
-                            class="btn btn-default disabled"
+                    <div class="btn-group"
+                        % if not user_name:
+                            data-bind="tooltip: {title: 'Log in or create an account to duplicate this project', placement: 'top'}"
                         % endif
-                            href="#">
-                            <i class="fa fa-eye"></i>
-                            <span data-bind="text: watchButtonDisplay" id="watchCount"></span>
-                        </a>
-                    </div>
-                    <div class="btn-group">
-                        <a
-                        % if user_name:
-                            class="btn btn-default"
-                            data-bind="tooltip: {title: 'Duplicate', placement: 'bottom', container : 'body'}"
-                            data-target="#duplicateModal" data-toggle="modal"
-                        % else:
-                            class="btn btn-default disabled"
-                        % endif
-                            href="#">
-                            <span class="glyphicon glyphicon-share"></span>&nbsp; ${ node['templated_count'] + node['fork_count'] + node['points'] }
-                        </a>
+                        >
+                            <a
+                            % if user_name:
+                                class="btn btn-default"
+                                data-bind="tooltip: {title: 'Duplicate', placement: 'bottom', container : 'body'}"
+                                data-target="#duplicateModal" data-toggle="modal"
+                            % else:
+                                class="btn btn-default disabled"
+                            % endif
+                                href="#">
+                                <span class="glyphicon glyphicon-share"></span>&nbsp; ${ node['templated_count'] + node['fork_count'] + node['points'] }
+                            </a>
                     </div>
                     % if 'badges' in addons_enabled and badges and badges['can_award']:
                         <div class="btn-group">
@@ -98,6 +93,9 @@
                                 <i class="fa fa-plus"></i> Award
                             </button>
                         </div>
+                    % endif
+                    % if node["is_public"]:
+                    <div class="btn-group" id="shareButtonsPopover"></div>
                     % endif
                 </div>
             </div>
@@ -111,7 +109,7 @@
                     Contributors:
                 % endif
 
-                % if node['anonymous'] and not node['is_public']:
+                % if node['anonymous']:
                     <ol>Anonymous Contributors</ol>
                 % else:
                     <ol>
@@ -123,13 +121,31 @@
                     </ol>
                 % endif
                 </div>
-                % if enable_institutions:
-                    % if user['is_contributor']:
-                        <a class="link-dashed" href="${node['url']}settings/#configureInstitutionAnchor" id="institution">Affiliated Institution:</a>
-                    % else:
-                        Affiliated institution:
+                % if enable_institutions and not node['anonymous']:
+                    % if ('admin' in user['permissions'] and not node['is_registration']) and (len(node['institutions']) != 0 or len(user['institutions']) != 0):
+                        <a class="link-dashed" href="${node['url']}settings/#configureInstitutionAnchor" id="institution">Affiliated Institutions:</a>
+                        % if node['institutions'] != []:
+                            % for inst in node['institutions']:
+                                % if inst != node['institutions'][-1]:
+                                    <span><a href="/institutions/${inst['id']}">${inst['name']}</a>, </span>
+                                % else:
+                                    <a href="/institutions/${inst['id']}">${inst['name']}</a>
+                                % endif
+                            % endfor
+                        % else:
+                            <span> None </span>
+                        % endif
                     % endif
-                    <span class="text-muted"> ${node['institution']['name']} </span>
+                    % if not ('admin' in user['permissions'] and not node['is_registration']) and node['institutions'] != []:
+                        Affiliated institutions:
+                        % for inst in node['institutions']:
+                            % if inst != node['institutions'][-1]:
+                                <span><a href="/institutions/${inst['id']}">${inst['name']}</a>, </span>
+                            % else:
+                                <a href="/institutions/${inst['id']}">${inst['name']}</a>
+                            % endif
+                        % endfor
+                    % endif
                 % endif
                 % if node['is_fork']:
                     <p>
@@ -183,19 +199,16 @@
                   <!-- /ko -->
                 </span>
                 <p>
-                Category: <span class="node-category">${node['category']}</span>
-                &nbsp;
-                <span data-bind="css: icon"></span>
+                    Category: <span id="nodeCategoryEditable">${node['category']}</span>
+                    <span data-bind="css: icon"></span>
                 </p>
 
-
-                <p>
-                % if not node['description']:
-                    <span id="description">Description:</span> <span id="nodeDescriptionEditable" class="text-muted" data-type="textarea">${'No description'}</span>
-                % elif node['description'] or 'write' in user['permissions']:
-                    <span id="description">Description:</span> <span id="nodeDescriptionEditable" class="node-description overflow" data-type="textarea">${node['description']}</span>
+                % if (node['description']) or (not node['description'] and 'write' in user['permissions'] and not node['is_registration']):
+                    <p>
+                    <span id="description">Description:</span> <span id="nodeDescriptionEditable" class="node-description overflow" data-type="textarea">
+                        ${node['description']}</span>
+                    </p>
                 % endif
-                </p>
                 % if ('admin' in user['permissions'] or node['license'].get('name', 'No license') != 'No license'):
                     <p>
                       <license-picker params="saveUrl: '${node['update_url']}',
@@ -220,8 +233,6 @@
 
 <%include file="project/modal_add_pointer.mako"/>
 
-<%include file="project/modal_add_component.mako"/>
-
 % if user['can_comment'] or node['has_comments']:
     <%include file="include/comment_pane_template.mako"/>
 % endif
@@ -245,14 +256,25 @@
                    <a href="${node['url']}files/"> <i class="fa fa-external-link"></i> </a>
                 </div>
             </div>
-            <div class="panel-body">
-                <div id="treeGrid">
-                    <div class="spinner-loading-wrapper">
-                        <div class="logo-spin logo-lg"></div>
-                         <p class="m-t-sm fg-load-message"> Loading files...  </p>
+            % if not node['is_registration'] and not node['anonymous'] and 'write' in user['permissions']:
+                <div class="row">
+                    <div class="col-sm-12 m-t-sm m-l-md">
+                        <span class="f-w-xl">Click on a storage provider or drag and drop to upload</span>
                     </div>
                 </div>
-            </div>
+               <div class="panel-body panel-body-with-instructions">
+            %else:
+               <div class="panel-body">
+            %endif
+                    <div id="treeGrid">
+                        <div class="spinner-loading-wrapper">
+                            <div class="logo-spin logo-lg"></div>
+                             <p class="m-t-sm fg-load-message"> Loading files...  </p>
+                        </div>
+                    </div>
+                </div><!-- end .panel-body -->
+
+
         </div>
 
         % if addons:
@@ -297,7 +319,7 @@
                             <span data-bind="text: chicago"></span>
                         <div data-bind="validationOptions: {insertMessages: false, messagesOnModified: false}, foreach: citations">
                             <!-- ko if: view() === 'view' -->
-                                <div class="f-w-xl m-t-md">{{name}}
+                                <div class="f-w-xl m-t-md"><span data-bind="text: name"></span>
                                     % if 'admin' in user['permissions'] and not node['is_registration']:
                                         <!-- ko ifnot: $parent.editing() -->
                                             <button class="btn btn-default btn-sm" data-bind="click: function() {edit($parent)}"><i class="fa fa-edit"></i> Edit</button>
@@ -359,8 +381,20 @@
 
         %endif
 
-
-        <%include file="log_list.mako" args="scripted=True" />
+        <!-- Recent Activity (Logs) -->
+        <div class="panel panel-default">
+            <div class="panel-heading clearfix">
+                <h3 class="panel-title">Recent Activity</h3>
+            </div>
+            <div class="panel-body">
+                <div id="logFeed">
+                    <div class="spinner-loading-wrapper">
+                        <div class="logo-spin logo-lg"></div>
+                         <p class="m-t-sm fg-load-message"> Loading logs...  </p>
+                    </div>
+                </div>
+            </div>
+        </div>
 
     </div>
 
@@ -373,7 +407,9 @@
             <h3 class="panel-title" style="padding-bottom: 5px; padding-top: 5px;">Components </h3>
             <div class="pull-right">
                 % if 'write' in user['permissions'] and not node['is_registration']:
-                    <a class="btn btn-sm btn-default" data-toggle="modal" data-target="#newComponent">Add Component</a>
+                    <span id="newComponent">
+                        <button class="btn btn-sm btn-default" disabled="true">Add Component</button>
+                    </span>
                     <a class="btn btn-sm btn-default" data-toggle="modal" data-target="#addPointer">Add Links</a>
                 % endif
             </div>
@@ -383,7 +419,7 @@
                 <div id="containment">
                     <div mod-meta='{
                         "tpl": "util/render_nodes.mako",
-                        "uri": "${node["api_url"]}get_children/",
+                        "uri": "${node["api_url"]}get_readable_descendants/",
                         "replace": true,
                         "kwargs": {
                           "sortable" : ${'true' if not node['is_registration'] else 'false'},
@@ -425,13 +461,22 @@ ${parent.javascript_bottom()}
     window.contextVars = $.extend(true, {}, window.contextVars, {
         currentUser: {
             canComment: ${ user['can_comment'] | sjson, n },
-            canEdit: ${ user['can_edit'] | sjson, n }
+            canEdit: ${ user['can_edit'] | sjson, n },
         },
         node: {
+            id: ${node['id'] | sjson, n},
             hasChildren: ${ node['has_children'] | sjson, n },
             isRegistration: ${ node['is_registration'] | sjson, n },
-            tags: ${ node['tags'] | sjson, n }
-        }
+            tags: ${ node['tags'] | sjson, n },
+            institutions: ${node['institutions'] | sjson, n},
+        },
+        nodeCategories: ${ node_categories | sjson, n },
+        analyticsMeta: {
+            pageMeta: {
+                title: 'Home',
+                public: true,
+            },
+        },
     });
 </script>
 

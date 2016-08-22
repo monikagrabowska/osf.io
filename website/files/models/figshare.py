@@ -1,4 +1,5 @@
-from website.util.sanitize import escape_html
+import markupsafe
+
 from website.files.models.base import File, Folder, FileNode, FileVersion
 
 
@@ -38,8 +39,10 @@ class FigshareFile(FigshareFileNode, File):
             </style>
             <div class="alert alert-info" role="alert">
             The file "{name}" is still a draft on figshare. <br>
-            To view it  on the OSF <a href="http://figshare.com/faqs">publish</a> it on figshare.
+            To view it  on the OSF
+            <a href="https://support.figshare.com/support/solutions">publish</a>
+            it on figshare.
             </div>
-            '''.format(name=escape_html(self.name)))
+            '''.format(name=markupsafe.escape(self.name)))
 
         return version

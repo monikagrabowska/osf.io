@@ -1,5 +1,6 @@
 from django.core.validators import URLValidator
 from rest_framework import serializers as ser
+
 from modularodm import Q
 
 from website.models import ApiOAuth2Application
@@ -28,6 +29,9 @@ class ApiOAuthApplicationBaseSerializer(JSONAPISerializer):
     def absolute_url(self, obj):
         return obj.absolute_url
 
+    def get_absolute_url(self, obj):
+        return obj.get_absolute_url()
+
     def reset_url(self, obj):
         return absolute_reverse('applications:application-reset', kwargs={'client_id': obj.client_id})
 
@@ -51,12 +55,12 @@ class ApiOAuth2ApplicationSerializer(ApiOAuthApplicationBaseSerializer):
     home_url = ser.CharField(help_text="The full URL to this application's homepage.",
                              required=True,
                              validators=[URLValidator()],
-                             label="Home URL")
+                             label='Home URL')
 
     callback_url = ser.CharField(help_text='The callback URL for this application (refer to OAuth documentation)',
                                  required=True,
                                  validators=[URLValidator()],
-                                 label="Callback URL")
+                                 label='Callback URL')
 
     owner = ser.CharField(help_text='The id of the user who owns this application',
                           read_only=True,  # Don't let user register an application in someone else's name

@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
 
 from datetime import datetime
+import uuid
 
-from framework.sessions import session, create_session, Session
-from modularodm import Q
 from framework import bcrypt
 from framework.auth import signals
+from framework.auth.core import User, Auth
+from framework.auth.core import get_user, generate_verification_key
 from framework.auth.exceptions import DuplicateEmailError
-
-from .core import User, Auth
-from .core import get_user
+from framework.sessions import session, create_session
+from framework.sessions.utils import remove_session
 
 
 __all__ = [
@@ -22,6 +22,7 @@ __all__ = [
     'logout',
     'register_unconfirmed',
 ]
+
 
 def get_display_name(username):
     """Return the username to display in the navbar. Shortens long usernames."""
@@ -43,18 +44,22 @@ def authenticate(user, access_token, response):
         'auth_user_access_token': access_token,
     })
     user.date_last_login = datetime.utcnow()
+    user.clean_email_verifications()
+    user.update_affiliated_institutions_by_email_domain()
     user.save()
     response = create_session(response, data=data)
     return response
 
 
 def logout():
+    """Clear users' session(s) and log them out of OSF."""
+
     for key in ['auth_user_username', 'auth_user_id', 'auth_user_fullname', 'auth_user_access_token']:
         try:
             del session.data[key]
         except KeyError:
             pass
-    Session.remove(Q('_id', 'eq', session._id))
+    remove_session(session)
     return True
 
 
@@ -79,3 +84,23 @@ def register_unconfirmed(username, password, fullname, campaign=None):
     else:
         raise DuplicateEmailError('User {0!r} already exists'.format(username))
     return user
+
+
+def get_or_create_user(fullname, address, is_spam=False):
+    """Get or create user by email address.
+
+    :param str fullname: User full name
+    :param str address: User email address
+    :param bool is_spam: User flagged as potential spam
+    :return: Tuple of (user, created)
+    """
+    user = get_user(email=address)
+    if user:
+        return user, False
+    else:
+        password = str(uuid.uuid4())
+        user = User.create_confirmed(address, password, fullname)
+        user.verification_key = generate_verification_key()
+        if is_spam:
+            user.system_tags.append('is_spam')
+        return user, True

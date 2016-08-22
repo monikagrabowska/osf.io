@@ -31,6 +31,7 @@ from website.project import signals as project_signals
 from website.project.metadata.schemas import _id_to_name
 from website import util
 from website.project.metadata.utils import serialize_meta_schema
+from website.project.model import has_anonymous_link
 from website.archiver.decorators import fail_archive_on_error
 
 from website.identifiers.client import EzidClient
@@ -55,6 +56,11 @@ def node_register_page(auth, node, **kwargs):
 
 @must_be_valid_project
 @must_have_permission(ADMIN)
+def node_registration_retraction_redirect(auth, node, **kwargs):
+    return redirect(node.web_url_for('node_registration_retraction_get', _guid=True))
+
+@must_be_valid_project
+@must_have_permission(ADMIN)
 def node_registration_retraction_get(auth, node, **kwargs):
     """Prepares node object for registration retraction page.
 
@@ -65,12 +71,12 @@ def node_registration_retraction_get(auth, node, **kwargs):
     if not node.is_registration:
         raise HTTPError(http.BAD_REQUEST, data={
             'message_short': 'Invalid Request',
-            'message_long': 'Retractions of non-registrations is not permitted.'
+            'message_long': 'Withdrawal of non-registrations is not permitted.'
         })
     if node.is_pending_retraction:
         raise HTTPError(http.BAD_REQUEST, data={
             'message_short': 'Invalid Request',
-            'message_long': 'This registration is already pending a retraction.'
+            'message_long': 'This registration is already pending withdrawal.'
         })
 
     return serialize_node(node, auth, primary=True)
@@ -86,18 +92,18 @@ def node_registration_retraction_post(auth, node, **kwargs):
     if node.is_pending_retraction:
         raise HTTPError(http.BAD_REQUEST, data={
             'message_short': 'Invalid Request',
-            'message_long': 'This registration is already pending retraction'
+            'message_long': 'This registration is already pending withdrawal'
         })
     if not node.is_registration:
         raise HTTPError(http.BAD_REQUEST, data={
             'message_short': 'Invalid Request',
-            'message_long': 'Retractions of non-registrations is not permitted.'
+            'message_long': 'Withdrawal of non-registrations is not permitted.'
         })
 
     if node.root is not node:
         raise HTTPError(http.BAD_REQUEST, data={
             'message_short': 'Invalid Request',
-            'message_long': 'Retraction of non-parent registrations is not permitted.'
+            'message_long': 'Withdrawal of non-parent registrations is not permitted.'
         })
 
     data = request.get_json()
@@ -136,6 +142,12 @@ def node_register_template_page(auth, node, metaschema_id, **kwargs):
             })
 
         ret = _view_project(node, auth, primary=True)
+        my_meta = serialize_meta_schema(meta_schema)
+        if has_anonymous_link(node, auth):
+            for indx, schema_page in enumerate(my_meta['schema']['pages']):
+                for idx, schema_question in enumerate(schema_page['questions']):
+                    if schema_question['title'] in settings.ANONYMIZED_TITLES:
+                        del my_meta['schema']['pages'][indx]['questions'][idx]
         ret['node']['registered_schema'] = serialize_meta_schema(meta_schema)
         return ret
     else:

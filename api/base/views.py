@@ -1,16 +1,28 @@
+import weakref
+from django.conf import settings as django_settings
 from django.http import JsonResponse
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import generics
+from rest_framework import status
+from rest_framework import permissions as drf_permissions
+
+from framework.auth.oauth_scopes import CoreScopes
+
 from rest_framework.mixins import ListModelMixin
+from api.base import permissions as base_permissions
+from api.base.exceptions import RelationshipPostMakesNoChanges
 
 from api.users.serializers import UserSerializer
+from api.base.parsers import JSONAPIRelationshipParser
+from api.base.parsers import JSONAPIRelationshipParserForRegularJSON
+from api.base.requests import EmbeddedRequest
+from api.base.serializers import LinkedNodesRelationshipSerializer
+from api.base import utils
+from api.nodes.permissions import ReadOnlyIfRegistration
+from api.nodes.permissions import ContributorOrPublicForRelationshipPointers
 
-from website import settings
-from django.conf import settings as django_settings
-from .utils import absolute_reverse, is_truthy
-
-from .requests import EmbeddedRequest
+CACHE = weakref.WeakKeyDictionary()
 
 
 class JSONAPIBaseView(generics.GenericAPIView):
@@ -30,19 +42,69 @@ class JSONAPIBaseView(generics.GenericAPIView):
         :return function object -> dict:
         """
         if getattr(field, 'field', None):
-                field = field.field
+            field = field.field
         def partial(item):
             # resolve must be implemented on the field
-            view, view_args, view_kwargs = field.resolve(item)
-            if issubclass(view.cls, ListModelMixin) and field.always_embed:
-                raise Exception("Cannot auto-embed a list view.")
-            request = EmbeddedRequest(self.request)
+            v, view_args, view_kwargs = field.resolve(item, field_name)
+            if not v:
+                return None
+            if isinstance(self.request._request, EmbeddedRequest):
+                request = self.request._request
+            else:
+                request = EmbeddedRequest(self.request)
+
             view_kwargs.update({
                 'request': request,
                 'is_embedded': True
             })
-            response = view(*view_args, **view_kwargs)
-            return response.data
+
+            # Setup a view ourselves to avoid all the junk DRF throws in
+            # v is a function that hides everything v.cls is the actual view class
+            view = v.cls()
+            view.args = view_args
+            view.kwargs = view_kwargs
+            view.request = request
+            view.request.parser_context['kwargs'] = view_kwargs
+            view.format_kwarg = view.get_format_suffix(**view_kwargs)
+
+            _cache_key = (v.cls, field_name, view.get_serializer_class(), item)
+            if _cache_key in CACHE.setdefault(self.request._request, {}):
+                # We already have the result for this embed, return it
+                return CACHE[self.request._request][_cache_key]
+
+            # Cache serializers. to_representation of a serializer should NOT augment it's fields so resetting the context
+            # should be sufficient for reuse
+            if not view.get_serializer_class() in CACHE.setdefault(self.request._request, {}):
+                CACHE[self.request._request][view.get_serializer_class()] = view.get_serializer_class()(many=isinstance(view, ListModelMixin))
+            ser = CACHE[self.request._request][view.get_serializer_class()]
+
+            try:
+                ser._context = view.get_serializer_context()
+
+                if not isinstance(view, ListModelMixin):
+                    ret = ser.to_representation(view.get_object())
+                else:
+                    queryset = view.filter_queryset(view.get_queryset())
+                    page = view.paginate_queryset(queryset)
+
+                    ret = ser.to_representation(page or queryset)
+
+                    if page is not None:
+                        request.parser_context['view'] = view
+                        request.parser_context['kwargs'].pop('request')
+                        view.paginator.request = request
+                        ret = view.paginator.get_paginated_response(ret).data
+            except Exception as e:
+                ret = view.handle_exception(e).data
+
+            # Allow request to be gc'd
+            ser._context = None
+
+            # Cache our final result
+            CACHE[self.request._request][_cache_key] = ret
+
+            return ret
+
         return partial
 
     def get_serializer_context(self):
@@ -56,8 +118,7 @@ class JSONAPIBaseView(generics.GenericAPIView):
         else:
             embeds = self.request.query_params.getlist('embed')
 
-        fields = self.serializer_class._declared_fields
-        fields_check = fields.copy()
+        fields_check = self.serializer_class._declared_fields.copy()
 
         for field in fields_check:
             if getattr(fields_check[field], 'field', None):
@@ -75,13 +136,119 @@ class JSONAPIBaseView(generics.GenericAPIView):
 
         context.update({
             'enable_esi': (
-                is_truthy(self.request.query_params.get('esi', django_settings.ENABLE_ESI)) and
-                self.request.accepted_media_type in django_settings.ESI_MEDIA_TYPES
+                utils.is_truthy(self.request.query_params.get('esi', django_settings.ENABLE_ESI)) and
+                self.request.accepted_renderer.media_type in django_settings.ESI_MEDIA_TYPES
             ),
             'embed': embeds_partials,
             'envelope': self.request.query_params.get('envelope', 'data'),
         })
         return context
+
+
+class LinkedNodesRelationship(JSONAPIBaseView, generics.RetrieveUpdateDestroyAPIView, generics.CreateAPIView):
+    """ Relationship Endpoint for Linked Node relationships
+
+    Used to set, remove, update and retrieve the ids of the linked nodes attached to this collection. For each id, there
+    exists a node link that contains that node.
+
+    ##Actions
+
+    ###Create
+
+        Method:        POST
+        URL:           /links/self
+        Query Params:  <none>
+        Body (JSON):   {
+                         "data": [{
+                           "type": "linked_nodes",   # required
+                           "id": <node_id>   # required
+                         }]
+                       }
+        Success:       201
+
+    This requires both edit permission on the collection, and for the user that is
+    making the request to be able to read the nodes requested. Data can contain any number of
+    node identifiers. This will create a node_link for all node_ids in the request that
+    do not currently have a corresponding node_link in this collection.
+
+    ###Update
+
+        Method:        PUT || PATCH
+        URL:           /links/self
+        Query Params:  <none>
+        Body (JSON):   {
+                         "data": [{
+                           "type": "linked_nodes",   # required
+                           "id": <node_id>   # required
+                         }]
+                       }
+        Success:       200
+
+    This requires both edit permission on the collection and for the user that is
+    making the request to be able to read the nodes requested. Data can contain any number of
+    node identifiers. This will replace the contents of the node_links for this collection with
+    the contents of the request. It will delete all node links that don't have a node_id in the data
+    array, create node links for the node_ids that don't currently have a node id, and do nothing
+    for node_ids that already have a corresponding node_link. This means a update request with
+    {"data": []} will remove all node_links in this collection
+
+    ###Destroy
+
+        Method:        DELETE
+        URL:           /links/self
+        Query Params:  <none>
+        Body (JSON):   {
+                         "data": [{
+                           "type": "linked_nodes",   # required
+                           "id": <node_id>   # required
+                         }]
+                       }
+        Success:       204
+
+    This requires edit permission on the node. This will delete any node_links that have a
+    corresponding node_id in the request.
+    """
+    permission_classes = (
+        ContributorOrPublicForRelationshipPointers,
+        drf_permissions.IsAuthenticatedOrReadOnly,
+        base_permissions.TokenHasScope,
+        ReadOnlyIfRegistration,
+    )
+
+    required_read_scopes = [CoreScopes.NODE_LINKS_READ]
+    required_write_scopes = [CoreScopes.NODE_LINKS_WRITE]
+
+    serializer_class = LinkedNodesRelationshipSerializer
+    parser_classes = (JSONAPIRelationshipParser, JSONAPIRelationshipParserForRegularJSON, )
+
+    def get_object(self):
+        object = self.get_node(check_object_permissions=False)
+        auth = utils.get_user_auth(self.request)
+        obj = {'data': [
+            pointer for pointer in
+            object.nodes_pointer
+            if not pointer.node.is_deleted and not pointer.node.is_collection and
+            pointer.node.can_view(auth)
+        ], 'self': object}
+        self.check_object_permissions(self.request, obj)
+        return obj
+
+    def perform_destroy(self, instance):
+        data = self.request.data['data']
+        auth = utils.get_user_auth(self.request)
+        current_pointers = {pointer.node._id: pointer for pointer in instance['data']}
+        collection = instance['self']
+        for val in data:
+            if val['id'] in current_pointers:
+                collection.rm_pointer(current_pointers[val['id']], auth)
+
+    def create(self, *args, **kwargs):
+        try:
+            ret = super(LinkedNodesRelationship, self).create(*args, **kwargs)
+        except RelationshipPostMakesNoChanges:
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        return ret
+
 
 @api_view(('GET',))
 def root(request, format=None):
@@ -359,7 +526,7 @@ def root(request, format=None):
     ###OSF Node Categories
 
         value                 description
-        ------------------------------------------
+        ==========================================
         project               Project
         hypothesis            Hypothesis
         methods and measures  Methods and Measures
@@ -373,7 +540,7 @@ def root(request, format=None):
     ###OSF Node Permission keys
 
         value        description
-        ------------------------------------------
+        ==========================================
         read         Read-only access
         write        Write access (make changes, cannot delete)
         admin        Admin access (full write, create, delete, contributor add)
@@ -383,9 +550,8 @@ def root(request, format=None):
     Valid storage providers are:
 
         value        description
-        ------------------------------------------
+        ==========================================
         box          Box.com
-        cloudfiles   Rackspace Cloud Files
         dataverse    Dataverse
         dropbox      Dropbox
         figshare     figshare
@@ -408,12 +574,18 @@ def root(request, format=None):
             'current_user': current_user,
         },
         'links': {
-            'nodes': absolute_reverse('nodes:node-list'),
-            'users': absolute_reverse('users:user-list'),
+            'nodes': utils.absolute_reverse('nodes:node-list'),
+            'users': utils.absolute_reverse('users:user-list'),
+            'collections': utils.absolute_reverse('collections:collection-list'),
+            'registrations': utils.absolute_reverse('registrations:registration-list'),
+            'institutions': utils.absolute_reverse('institutions:institution-list'),
+            'licenses': utils.absolute_reverse('licenses:license-list'),
+            'metaschemas': utils.absolute_reverse('metaschemas:metaschema-list'),
         }
     }
-    if settings.DEV_MODE:
-        return_val["links"]["collections"] = absolute_reverse('collections:collection-list')
+
+    if utils.has_admin_scope(request):
+        return_val['meta']['admin'] = True
 
     return Response(return_val)
 

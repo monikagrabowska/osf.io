@@ -1,7 +1,5 @@
 # -*- coding: utf-8 -*-
 import httplib as http
-import sys
-import inspect
 import pkgutil
 
 import mock
@@ -12,10 +10,14 @@ from nose.tools import *  # flake8: noqa
 from tests.base import ApiTestCase
 from tests import factories
 
+from framework.auth.oauth_scopes import CoreScopes
+
 from api.base.settings.defaults import API_BASE
 from rest_framework.permissions import IsAuthenticatedOrReadOnly, IsAuthenticated
 from api.base.permissions import TokenHasScope
 from website.settings import DEBUG_MODE
+
+from django.contrib.auth.models import User
 
 import importlib
 
@@ -62,18 +64,25 @@ class TestApiBaseViews(ApiTestCase):
             for cls in base_permissions:
                 if isinstance(cls, tuple):
                     has_cls = any([c in view.permission_classes for c in cls])
-                    assert_true(has_cls, "{0} lacks the appropriate permission classes".format(name))
+                    assert_true(has_cls, "{0} lacks the appropriate permission classes".format(view))
                 else:
-                    assert_in(cls, view.permission_classes, "{0} lacks the appropriate permission classes".format(name))
+                    assert_in(cls, view.permission_classes, "{0} lacks the appropriate permission classes".format(view))
             for key in ['read', 'write']:
                 scopes = getattr(view, 'required_{}_scopes'.format(key), None)
                 assert_true(bool(scopes))
                 for scope in scopes:
                     assert_is_not_none(scope)
+                if key == 'write':
+                    assert_not_in(CoreScopes.ALWAYS_PUBLIC, scopes)
 
     def test_view_classes_support_embeds(self):
         for view in VIEW_CLASSES:
             assert_true(hasattr(view, '_get_embed_partial'), "{0} lacks embed support".format(view))
+
+    def test_view_classes_define_or_override_serializer_class(self):
+        for view in VIEW_CLASSES:
+            has_serializer_class = getattr(view, 'serializer_class', None) or getattr(view, 'get_serializer_class', None)
+            assert_true(has_serializer_class, "{0} should include serializer class or override get_serializer_class()".format(view))
 
     @mock.patch('framework.auth.core.User.is_confirmed', mock.PropertyMock(return_value=False))
     def test_unconfirmed_user_gets_error(self):
@@ -110,4 +119,12 @@ class TestJSONAPIBaseView(ApiTestCase):
         self.app.get(self.url, auth=self.user.auth)
         assert_in('request', mock_to_representation.call_args[0][0].context)
 
+    def test_reverse_sort_possible(self):
+        response = self.app.get('http://localhost:8000/v2/users/me/nodes/?sort=-title', auth=self.user.auth)
+        assert_equal(response.status_code, 200)
 
+
+class TestSwaggerDocs(ApiTestCase):
+    def test_swagger_doc_json_route(self):
+        res = self.app.get('/v2/docs/api-docs/v2')
+        assert_equal(res.status_code, 200)
