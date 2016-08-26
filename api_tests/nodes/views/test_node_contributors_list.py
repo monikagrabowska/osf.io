@@ -839,6 +839,30 @@ class TestNodeContributorAdd(NodeCRUDTestCase):
         assert_equal(res.status_code, 201)
         assert_equal(res.json['data']['attributes']['unregistered_contributor'], 'John Doe')
         assert_equal(res.json['data']['attributes']['email'], 'john@doe.com')
+        assert_equal(res.json['data']['attributes']['bibliographic'], True)
+        assert_equal(res.json['data']['attributes']['permission'], permissions.WRITE)
+        assert_in(res.json['data']['embeds']['users']['data']['id'], self.public_project.contributors)
+
+    @assert_logs(NodeLog.CONTRIB_ADDED, 'public_project')
+    def test_add_contributor_with_fullname_and_email_unregistered_user_set_attributes(self):
+        payload = {
+            'data': {
+                'type': 'contributors',
+                'attributes': {
+                    'full_name': 'John Doe',
+                    'email': 'john@doe.com',
+                    'bibliographic': False,
+                    'permission': permissions.READ
+                }
+            }
+        }
+        res = self.app.post_json_api(self.public_url, payload, auth=self.user.auth)
+        self.public_project.reload()
+        assert_equal(res.status_code, 201)
+        assert_equal(res.json['data']['attributes']['unregistered_contributor'], 'John Doe')
+        assert_equal(res.json['data']['attributes']['email'], 'john@doe.com')
+        assert_equal(res.json['data']['attributes']['bibliographic'], False)
+        assert_equal(res.json['data']['attributes']['permission'], permissions.READ)
         assert_in(res.json['data']['embeds']['users']['data']['id'], self.public_project.contributors)
 
     @assert_logs(NodeLog.CONTRIB_ADDED, 'public_project')
@@ -1001,18 +1025,6 @@ class TestNodeContributorCreateEmail(NodeCRUDTestCase):
     def setUp(self):
         super(TestNodeContributorCreateEmail, self).setUp()
         self.url = '/{}nodes/{}/contributors/'.format(API_BASE, self.public_project._id)
-
-    def test_add_contributor_email_throttle(self):
-        user_one = UserFactory()
-        user_two = UserFactory()
-        payload_one = {'data': {'type': 'contributors',
-                                'attributes':{'full_name': user_one.fullname, 'email': user_one.username}}}
-        payload_two = {'data': {'type': 'contributors',
-                                'attributes': {'full_name': user_two.fullname, 'email': user_two.username}}}
-        res = self.app.post_json_api(self.url, payload_one, auth=self.user.auth)
-        assert_equal(res.status_code, 201)
-        res = self.app.post_json_api(self.url, payload_two, auth=self.user.auth, expect_errors=True)
-        assert_equal(res.status_code, 429)
 
     def test_add_contributor_email_throttle_sleep(self):
         user_one = UserFactory()
