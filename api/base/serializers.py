@@ -17,7 +17,7 @@ from api.base.exceptions import JSONAPIException
 from api.base.exceptions import TargetNotSupportedError
 from api.base.exceptions import RelationshipPostMakesNoChanges
 from api.base.settings import BULK_SETTINGS
-from api.base.utils import absolute_reverse, extend_querystring_params, get_user_auth
+from api.base.utils import absolute_reverse, extend_querystring_params, get_user_auth, extend_querystring_if_key_exists
 from framework.auth import core as auth_core
 from website import settings
 from website import util as website_utils
@@ -524,12 +524,11 @@ class RelationshipField(ser.HyperlinkedIdentityField):
                     if self.filter:
                         formatted_filter = self.format_filter(obj)
                         if formatted_filter:
-                            url = '{}?filter{}'.format(url, formatted_filter)
+                            url = extend_querystring_params(url, {'filter': formatted_filter})
                         else:
                             url = None
-                    if 'view_only' in request.query_params.keys():
-                        url = '{}?view_only={}'.format(url, request.query_params.get('view_only'))
 
+                    url = extend_querystring_if_key_exists(url, self.context['request'], 'view_only')
                     urls[view_name] = url
 
         if not urls['self'] and not urls['related']:
@@ -733,6 +732,9 @@ class LinksField(ser.Field):
         # not just the field attribute.
         return obj
 
+    def extend_absolute_url(self, obj):
+        return extend_querystring_if_key_exists(obj.get_absolute_url(), self.context['request'], 'view_only')
+
     def to_representation(self, obj):
         ret = {}
         for name, value in self.links.iteritems():
@@ -743,7 +745,7 @@ class LinksField(ser.Field):
             else:
                 ret[name] = url
         if hasattr(obj, 'get_absolute_url') and 'self' not in self.links:
-            ret['self'] = obj.get_absolute_url()
+            ret['self'] = self.extend_absolute_url(obj)
         return ret
 
 
@@ -1087,7 +1089,7 @@ class JSONAPISerializer(ser.Serializer):
         raise NotImplementedError()
 
     def get_absolute_html_url(self, obj):
-        return obj.absolute_url
+        return extend_querystring_if_key_exists(obj.absolute_url, self.context['request'], 'view_only')
 
     # overrides Serializer: Add HTML-sanitization similar to that used by APIv1 front-end views
     def is_valid(self, clean_html=True, **kwargs):
@@ -1210,6 +1212,13 @@ class LinkedNode(JSONAPIRelationshipSerializer):
         type_ = 'linked_nodes'
 
 
+class LinkedRegistration(JSONAPIRelationshipSerializer):
+    id = ser.CharField(source='node._id', required=False, allow_null=True)
+
+    class Meta:
+        type_ = 'linked_registrations'
+
+
 class LinkedNodesRelationshipSerializer(ser.Serializer):
 
     data = ser.ListField(child=LinkedNode())
@@ -1245,7 +1254,78 @@ class LinkedNodesRelationshipSerializer(ser.Serializer):
         return {'data': [
             pointer for pointer in
             obj.nodes_pointer
-            if not pointer.node.is_deleted and not pointer.node.is_collection
+            if not pointer.node.is_deleted
+            and not pointer.node.is_registration
+            and not pointer.node.is_collection
+        ], 'self': obj}
+
+    def update(self, instance, validated_data):
+        collection = instance['self']
+        auth = utils.get_user_auth(self.context['request'])
+
+        add, remove = self.get_pointers_to_add_remove(pointers=instance['data'], new_pointers=validated_data['data'])
+
+        for pointer in remove:
+            collection.rm_pointer(pointer, auth)
+        for node in add:
+            collection.add_pointer(node, auth)
+
+        return self.make_instance_obj(collection)
+
+    def create(self, validated_data):
+        instance = self.context['view'].get_object()
+        auth = utils.get_user_auth(self.context['request'])
+        collection = instance['self']
+
+        add, remove = self.get_pointers_to_add_remove(pointers=instance['data'], new_pointers=validated_data['data'])
+
+        if not len(add):
+            raise RelationshipPostMakesNoChanges
+
+        for node in add:
+            collection.add_pointer(node, auth)
+
+        return self.make_instance_obj(collection)
+
+
+class LinkedRegistrationsRelationshipSerializer(ser.Serializer):
+
+    data = ser.ListField(child=LinkedRegistration())
+    links = LinksField({'self': 'get_self_url',
+                        'html': 'get_related_url'})
+
+    def get_self_url(self, obj):
+        return obj['self'].linked_registrations_self_url
+
+    def get_related_url(self, obj):
+        return obj['self'].linked_registrations_related_url
+
+    class Meta:
+        type_ = 'linked_registrations'
+
+    def get_pointers_to_add_remove(self, pointers, new_pointers):
+        diff = relationship_diff(
+            current_items={pointer.node._id: pointer for pointer in pointers},
+            new_items={val['node']['_id']: val for val in new_pointers}
+        )
+
+        nodes_to_add = []
+        for node_id in diff['add']:
+            node = Node.load(node_id)
+            if not node:
+                raise exceptions.NotFound(detail='Node with id "{}" was not found'.format(node_id))
+            nodes_to_add.append(node)
+
+        return nodes_to_add, diff['remove'].values()
+
+    def make_instance_obj(self, obj):
+        # Convenience method to format instance based on view's get_object
+        return {'data': [
+            pointer for pointer in
+            obj.nodes_pointer
+            if not pointer.node.is_deleted
+            and pointer.node.is_registration
+            and not pointer.node.is_collection
         ], 'self': obj}
 
     def update(self, instance, validated_data):

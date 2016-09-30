@@ -110,7 +110,7 @@ class TestUser(base.OsfTestCase):
         assert_equal(e.exception.message, "Can't remove primary email")
 
     def test_add_same_unconfirmed_email_twice(self):
-        email = "test@example.com"
+        email = "test@mail.com"
         token1 = self.user.add_unconfirmed_email(email)
         self.user.save()
         self.user.reload()
@@ -368,6 +368,7 @@ class TestUserMerging(base.OsfTestCase):
             'username',
             'mailing_lists',
             'verification_key',
+            'verification_key_v2',
             '_affiliated_institutions',
             'contributor_added_email_records',
             'requested_deactivation',

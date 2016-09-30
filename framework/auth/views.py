@@ -22,7 +22,7 @@ from framework.auth.exceptions import DuplicateEmailError, ExpiredTokenError, In
 from framework.auth.core import generate_verification_key
 from framework.auth.decorators import collect_auth, must_be_logged_in
 from framework.auth.forms import ResendConfirmationForm, ForgotPasswordForm, ResetPasswordForm
-from framework.auth.utils import ensure_external_identity_uniqueness
+from framework.auth.utils import ensure_external_identity_uniqueness, validate_recaptcha
 from framework.exceptions import HTTPError
 from framework.flask import redirect  # VOL-aware redirect
 from framework.sessions.utils import remove_sessions_for_user, remove_session
@@ -36,95 +36,71 @@ from website.util.sanitize import strip_html
 
 
 @collect_auth
-def reset_password_get(auth, verification_key=None, **kwargs):
+def reset_password_get(auth, uid=None, token=None):
     """
     View for user to land on the reset password page.
     HTTp Method: GET
 
-    :raises: HTTPError(http.BAD_REQUEST) if verification_key is invalid
+    :param auth: the authentication state
+    :param uid: the user id
+    :param token: the token in verification key
+    :return
+    :raises: HTTPError(http.BAD_REQUEST) if verification key for the user is invalid, has expired or was used
     """
 
-    # If user is already logged in, log user out
+    # if users are logged in, log them out and redirect back to this page
     if auth.logged_in:
         return auth_logout(redirect_url=request.url)
 
-    # Check if request bears a valid verification_key
-    user_obj = get_user(verification_key=verification_key)
-    if not user_obj:
+    # Check if request bears a valid pair of `uid` and `token`
+    user_obj = User.load(uid)
+    if not (user_obj and user_obj.verify_password_token(token=token)):
         error_data = {
-            'message_short': 'Invalid url.',
-            'message_long': 'The verification key in the URL is invalid or has expired.'
+            'message_short': 'Invalid Request.',
+            'message_long': 'The requested URL is invalid, has expired, or was already used',
         }
-        raise HTTPError(400, data=error_data)
+        raise HTTPError(http.BAD_REQUEST, data=error_data)
+
+    # refresh the verification key (v2)
+    user_obj.verification_key_v2 = generate_verification_key(verification_type='password')
+    user_obj.save()
 
     return {
-        'verification_key': verification_key,
+        'uid': user_obj._id,
+        'token': user_obj.verification_key_v2['token'],
     }
 
 
-@collect_auth
-def reset_password(auth, **kwargs):
-    """ Show reset password page.
-    """
-    if auth.logged_in:
-        return auth_logout(redirect_url=request.url)
-    verification_key = kwargs['verification_key']
-
-    # Check if request bears a valid verification_key
-    user_obj = get_user(verification_key=verification_key)
-    if not user_obj:
-        error_data = {
-            'message_short': 'Invalid url.',
-            'message_long': 'The verification key in the URL is invalid or has expired.'
-        }
-        raise HTTPError(400, data=error_data)
-
-    return {
-        'verification_key': verification_key
-    }
-
-
-@collect_auth
-def forgot_password_get(auth, **kwargs):
-    """
-    View to user to land on forgot password page.
-    HTTP Method: GET
-    """
-
-    # If user is already logged in, redirect to dashboard page.
-    if auth.logged_in:
-        return redirect(web_url_for('dashboard'))
-
-    return {}
-
-
-@collect_auth
-def reset_password_post(auth, verification_key=None, **kwargs):
+def reset_password_post(uid=None, token=None):
     """
     View for user to submit reset password form.
     HTTP Method: POST
-    :raises: HTTPError(http.BAD_REQUEST) if verification_key is invalid
-    """
 
-    # If user is already logged in, log user out
-    if auth.logged_in:
-        return auth_logout(redirect_url=request.url)
+    :param uid: the user id
+    :param token: the token in verification key
+    :return:
+    :raises: HTTPError(http.BAD_REQUEST) if verification key for the user is invalid, has expired or was used
+    """
 
     form = ResetPasswordForm(request.form)
 
-    # Check if request bears a valid verification_key
-    user_obj = get_user(verification_key=verification_key)
-    if not user_obj:
+    # Check if request bears a valid pair of `uid` and `token`
+    user_obj = User.load(uid)
+    if not (user_obj and user_obj.verify_password_token(token=token)):
         error_data = {
-            'message_short': 'Invalid url.',
-            'message_long': 'The verification key in the URL is invalid or has expired.'
+            'message_short': 'Invalid Request.',
+            'message_long': 'The requested URL is invalid, has expired, or was already used',
         }
-        raise HTTPError(400, data=error_data)
+        raise HTTPError(http.BAD_REQUEST, data=error_data)
 
-    if form.validate():
-        # new random verification key, allows CAS to authenticate the user w/o password, one-time only.
-        # this overwrite also invalidates the verification key generated by forgot_password_post
-        user_obj.verification_key = generate_verification_key()
+    if not form.validate():
+        # Don't go anywhere
+        forms.push_errors_to_status(form.errors)
+    else:
+        # clear verification key (v2)
+        user_obj.verification_key_v2 = {}
+        # new verification key (v1) for CAS
+        user_obj.verification_key = generate_verification_key(verification_type=None)
         try:
             user_obj.set_password(form.password.data)
             user_obj.save()
@@ -133,71 +109,92 @@ def reset_password_post(auth, verification_key=None, **kwargs):
                 status.push_status_message(message, kind='warning', trust=False)
         else:
             status.push_status_message('Password reset', kind='success', trust=False)
-            # redirect to CAS and authenticate the user with the one-time verification key.
+            # redirect to CAS and authenticate the user automatically with one-time verification key.
             return redirect(cas.get_login_url(
                 web_url_for('user_account', _absolute=True),
                 username=user_obj.username,
                 verification_key=user_obj.verification_key
             ))
-    else:
-        forms.push_errors_to_status(form.errors)
-        # Don't go anywhere
 
     return {
-        'verification_key': verification_key
-    }, 400
+        'uid': user_obj._id,
+        'token': user_obj.verification_key_v2['token'],
+    }
 
 
 @collect_auth
-def forgot_password_post(auth, **kwargs):
+def forgot_password_get(auth):
+    """
+    View for user to land on the forgot password page.
+    HTTP Method: GET
+
+    :param auth: the authentication context
+    :return
+    """
+
+    # if users are logged in, log them out and redirect back to this page
+    if auth.logged_in:
+        return auth_logout(redirect_url=request.url)
+
+    return {}
+
+
+def forgot_password_post():
     """
     View for user to submit forgot password form.
     HTTP Method: POST
+    :return {}
     """
-
-    # If user is already logged in, redirect to dashboard page.
-    if auth.logged_in:
-        return redirect(web_url_for('dashboard'))
 
     form = ForgotPasswordForm(request.form, prefix='forgot_password')
 
-    if form.validate():
+    if not form.validate():
+        # Don't go anywhere
+        forms.push_errors_to_status(form.errors)
+    else:
         email = form.email.data
         status_message = ('If there is an OSF account associated with {0}, an email with instructions on how to '
                           'reset the OSF password has been sent to {0}. If you do not receive an email and believe '
                           'you should have, please contact OSF Support. ').format(email)
+        kind = 'success'
         # check if the user exists
         user_obj = get_user(email=email)
         if user_obj:
-            # check forgot_password rate limit
-            if throttle_period_expired(user_obj.email_last_sent, settings.SEND_EMAIL_THROTTLE):
-                # new random verification key, allows OSF to check whether the reset_password request is valid,
-                # this verification key is used twice, one for GET reset_password and one for POST reset_password
-                # and it will be destroyed when POST reset_password succeeds
-                user_obj.verification_key = generate_verification_key()
-                user_obj.email_last_sent = datetime.datetime.utcnow()
-                user_obj.save()
-                reset_link = furl.urljoin(
-                    settings.DOMAIN,
-                    web_url_for(
-                        'reset_password_get',
-                        verification_key=user_obj.verification_key
-                    )
-                )
-                mails.send_mail(
-                    to_addr=email,
-                    mail=mails.FORGOT_PASSWORD,
-                    reset_link=reset_link
-                )
-                status.push_status_message(status_message, kind='success', trust=False)
+            # rate limit forgot_password_post
+            if not throttle_period_expired(user_obj.email_last_sent, settings.SEND_EMAIL_THROTTLE):
+                status_message = 'You have recently requested to change your password. Please wait a few minutes ' \
+                                 'before trying again.'
+                kind = 'error'
             else:
-                status.push_status_message('You have recently requested to change your password. Please wait a '
-                                           'few minutes before trying again.', kind='error', trust=False)
-        else:
-            status.push_status_message(status_message, kind='success', trust=False)
-    else:
-        forms.push_errors_to_status(form.errors)
-        # Don't go anywhere
+                # TODO [OSF-6673]: Use the feature in [OSF-6998] for user to resend claim email.
+                # if the user account is not claimed yet
+                if (user_obj.is_invited and
+                        user_obj.unclaimed_records and
+                        not user_obj.date_last_login and
+                        not user_obj.is_claimed and
+                        not user_obj.is_registered):
+                    status_message = 'You cannot reset password on this account. Please contact OSF Support.'
+                    kind = 'error'
+                else:
+                    # new random verification key (v2)
+                    user_obj.verification_key_v2 = generate_verification_key(verification_type='password')
+                    user_obj.email_last_sent = datetime.datetime.utcnow()
+                    user_obj.save()
+                    reset_link = furl.urljoin(
+                        settings.DOMAIN,
+                        web_url_for(
+                            'reset_password_get',
+                            uid=user_obj._id,
+                            token=user_obj.verification_key_v2['token']
+                        )
+                    )
+                    mails.send_mail(
+                        to_addr=email,
+                        mail=mails.FORGOT_PASSWORD,
+                        reset_link=reset_link
+                    )
+
+        status.push_status_message(status_message, kind=kind, trust=False)
 
     return {}
 
@@ -245,13 +242,8 @@ def auth_login(auth, **kwargs):
         next_url = request.args.get('redirect_url')
         must_login_warning = False
 
-    if next_url:
-        # Only allow redirects which are relative root or full domain, disallows external redirects.
-        if not (next_url[0] == '/'
-                or next_url.startswith(settings.DOMAIN)
-                or next_url.startswith(settings.CAS_SERVER_URL)
-                or next_url.startswith(settings.MFR_SERVER_URL)):
-            raise HTTPError(http.InvalidURL)
+    if not validate_next_url(next_url):
+        raise HTTPError(http.BAD_REQUEST)
 
     if auth.logged_in:
         if not log_out:
@@ -354,6 +346,10 @@ def external_login_confirm_email_get(auth, uid, token):
     View for email confirmation links when user first login through external identity provider.
     HTTP Method: GET
 
+    When users click the confirm link, they are expected not to be logged in. If not, they will be logged out first and
+    redirected back to this view. After OSF verifies the link and performs all actions, they will be automatically
+    logged in through CAS and redirected back to this view again being authenticated.
+
     :param auth: the auth context
     :param uid: the user's primary key
     :param token: the verification token
@@ -362,11 +358,16 @@ def external_login_confirm_email_get(auth, uid, token):
     if not user:
         raise HTTPError(http.BAD_REQUEST)
 
-    if auth and auth.user and auth.user._id == user._id:
-        new = request.args.get('new', None)
-        if new:
-            status.push_status_message(language.WELCOME_MESSAGE, kind='default', jumbotron=True, trust=True)
-        return redirect(web_url_for('index'))
+    # if user is already logged in
+    if auth and auth.user:
+        # if it is the expected user
+        if auth.user._id == user._id:
+            new = request.args.get('new', None)
+            if new:
+                status.push_status_message(language.WELCOME_MESSAGE, kind='default', jumbotron=True, trust=True)
+            return redirect(web_url_for('index'))
+        # if it is a wrong user
+        return auth_logout(redirect_url=request.url)
 
     # token is invalid
     if token not in user.email_verifications:
@@ -386,6 +387,7 @@ def external_login_confirm_email_get(auth, uid, token):
         raise HTTPError(http.FORBIDDEN, e.message)
 
     if not user.is_registered:
+        user.set_password(uuid.uuid4(), notify=False)
         user.register(email)
 
     if email.lower() not in user.emails:
@@ -551,10 +553,17 @@ def unconfirmed_email_add(auth=None):
     }, 200
 
 
-def send_confirm_email(user, email, external_id_provider=None, external_id=None):
+def send_confirm_email(user, email, renew=False, external_id_provider=None, external_id=None):
     """
-    Sends a confirmation email to `user` to a given email.
+    Sends `user` a confirmation to the given `email`.
 
+
+    :param user: the user
+    :param email: the email
+    :param renew: refresh the token
+    :param external_id_provider: user's external id provider
+    :param external_id: user's external id
+    :return:
     :raises: KeyError if user does not have a confirmation token for the given email.
     """
 
@@ -562,6 +571,7 @@ def send_confirm_email(user, email, external_id_provider=None, external_id=None)
         email,
         external=True,
         force=True,
+        renew=renew,
         external_id_provider=external_id_provider
     )
 
@@ -630,13 +640,21 @@ def register_user(**kwargs):
     :raises: HTTPError(http.BAD_REQUEST) if validation fails or user already exists
     """
 
-    # Verify email address match
+    # Verify that email address match
     json_data = request.get_json()
     if str(json_data['email1']).lower() != str(json_data['email2']).lower():
         raise HTTPError(
             http.BAD_REQUEST,
             data=dict(message_long='Email addresses must match.')
         )
+
+    # Verify that captcha is valid
+    if settings.RECAPTCHA_SITE_KEY and not validate_recaptcha(json_data.get('g-recaptcha-response'), remote_ip=request.remote_addr):
+        raise HTTPError(
+            http.BAD_REQUEST,
+            data=dict(message_long='Invalid Captcha')
+        )
+
     try:
         full_name = request.json['fullName']
         full_name = strip_html(full_name)
@@ -660,6 +678,11 @@ def register_user(**kwargs):
                     email=markupsafe.escape(request.json['email1'])
                 )
             )
+        )
+    except ValidationError as e:
+        raise HTTPError(
+            http.BAD_REQUEST,
+            data=dict(message_long=e.message)
         )
 
     if settings.CONFIRM_REGISTRATIONS_BY_EMAIL:
@@ -710,7 +733,7 @@ def resend_confirmation_post(auth):
         if user:
             if throttle_period_expired(user.email_last_sent, settings.SEND_EMAIL_THROTTLE):
                 try:
-                    send_confirm_email(user, clean_email)
+                    send_confirm_email(user, clean_email, renew=True)
                 except KeyError:
                     # already confirmed, redirect to dashboard
                     status_message = 'This email {0} has already been confirmed.'.format(clean_email)
@@ -825,3 +848,27 @@ def external_login_email_post():
         'form': form,
         'external_id_provider': external_id_provider
     }
+
+
+def validate_next_url(next_url):
+    """
+    Non-view helper function that checks `next_url`.
+    Only allow redirects which are relative root or full domain (CAS, OSF and MFR).
+    Disallows external redirects.
+
+    :param next_url: the next url to check
+    :return: True if valid, False otherwise
+    """
+
+    if next_url:
+        # disable external domain using `//`: the browser allows `//` as a shortcut for non-protocol specific requests
+        # like http:// or https:// depending on the use of SSL on the page already.
+        if next_url.startswith('//'):
+            return False
+        # only OSF, MFR and CAS domains are allowed
+        if not (next_url[0] == '/' or
+                next_url.startswith(settings.DOMAIN) or
+                next_url.startswith(settings.CAS_SERVER_URL) or
+                next_url.startswith(settings.MFR_SERVER_URL)):
+            return False
+    return True

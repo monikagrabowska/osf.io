@@ -23,7 +23,6 @@ from modularodm import Q
 from modularodm.exceptions import NoResultsFound
 
 from framework.auth import User, Auth
-from framework.auth.core import generate_verification_key
 from framework.auth.utils import impute_names_model, impute_names
 from framework.guid.model import Guid
 from framework.mongo import StoredObject
@@ -107,7 +106,7 @@ class UserFactory(ModularOdmFactory):
         model = User
         abstract = False
 
-    username = Sequence(lambda n: 'fred{0}@example.com'.format(n))
+    username = Sequence(lambda n: 'fred{0}@mail.com'.format(n))
     # Don't use post generation call to set_password because
     # It slows down the tests dramatically
     password = 'password'
@@ -118,6 +117,7 @@ class UserFactory(ModularOdmFactory):
     merged_by = None
     email_verifications = {}
     verification_key = None
+    verification_key_v2 = {}
 
     @post_generation
     def set_names(self, create, extracted):
@@ -610,7 +610,7 @@ class DeprecatedUnregUserFactory(base.Factory):
         model = DeprecatedUnregUser
 
     nr_name = Sequence(lambda n: "Tom Jones{0}".format(n))
-    nr_email = Sequence(lambda n: "tom{0}@example.com".format(n))
+    nr_email = Sequence(lambda n: "tom{0}@mail.com".format(n))
 
     @classmethod
     def _create(cls, target_class, *args, **kwargs):
@@ -907,7 +907,6 @@ def create_fake_user():
         fullname=name,
         is_registered=True,
         is_claimed=True,
-        verification_key=generate_verification_key(),
         date_registered=fake.date_time(),
         emails=[email],
         **parsed

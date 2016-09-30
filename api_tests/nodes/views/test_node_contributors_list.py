@@ -402,27 +402,6 @@ class TestNodeContributorAdd(NodeCRUDTestCase):
         assert_equal(res.status_code, 400)
         assert_equal(res.json['errors'][0]['detail'], 'Malformed request.')
 
-    def test_add_contributor_incorrect_key_in_relationships(self):
-        data = {
-            'data': {
-                'type': 'contributors',
-                'attributes': {
-                    'bibliographic': True
-                },
-                'relationships': {
-                    'incorrect': {
-                        'data': {
-                            'id': self.user_two._id,
-                            'type': 'users'
-                        }
-                    }
-                }
-            }
-        }
-        res = self.app.post_json_api(self.public_url, data, auth=self.user.auth, expect_errors=True)
-        assert_equal(res.status_code, 400)
-        assert_equal(res.json['errors'][0]['detail'], 'Request relationships key "incorrect" does not match target_type "users"')
-
     def test_add_contributor_no_data_in_relationships(self):
         data = {
             'data': {
@@ -1046,19 +1025,6 @@ class TestNodeContributorCreateEmail(NodeCRUDTestCase):
     def setUp(self):
         super(TestNodeContributorCreateEmail, self).setUp()
         self.url = '/{}nodes/{}/contributors/'.format(API_BASE, self.public_project._id)
-
-    def test_add_contributor_email_throttle_sleep(self):
-        user_one = UserFactory()
-        user_two = UserFactory()
-        payload_one = {'data': {'type': 'contributors',
-                                'attributes':{'full_name': user_one.fullname, 'email': user_one.username}}}
-        payload_two = {'data': {'type': 'contributors',
-                                'attributes': {'full_name': user_two.fullname, 'email': user_two.username}}}
-        res = self.app.post_json_api(self.url, payload_one, auth=self.user.auth)
-        assert_equal(res.status_code, 201)
-        time.sleep(0.1)
-        res = self.app.post_json_api(self.url, payload_two, auth=self.user.auth)
-        assert_equal(res.status_code, 201)
 
     @mock.patch('framework.auth.views.mails.send_mail')
     def test_add_contributor_no_email_if_false(self, mock_mail):
