@@ -507,12 +507,6 @@ var LogPieces = {
         }
     },
 
-    figshare_title: {
-        view: function(ctrl, logObject) {
-            return returnTextParams('figshare_title', '', logObject);
-        }
-    },
-
     forward_url: {
         view: function(ctrl, logObject) {
             var url = logObject.attributes.params.forward_url;
@@ -640,12 +634,33 @@ var LogPieces = {
             }
             // Comment left on wiki
             if (wiki) {
-                return m('span', ['on wiki page ', m('a', {href: $osf.toRelativeUrl(wiki.url, window)}, wiki.name)]);
+                var name = (wiki.name === 'home') ? 'Home' : wiki.name;
+                return m('span', ['on wiki page ', m('a', {href: $osf.toRelativeUrl(wiki.url, window)}, name)]);
             }
             // Comment left on project
             return m('span', '');
         }
-    }
+    },
+
+    preprint: {
+        view: function(ctrl, logObject){
+            var preprint = logObject.attributes.params.preprint;
+            if (paramIsReturned(preprint, logObject)) {
+                return m('a', {href: '/' + preprint}, 'preprint');
+            }
+            return m('span', 'preprint');
+        }
+    },
+
+    preprint_provider: {
+        view: function(ctrl, logObject){
+            var preprint_provider = logObject.attributes.params.preprint_provider;
+            if (paramIsReturned((preprint_provider, logObject))) {
+                return m('a', {href: preprint_provider.url}, preprint_provider.name);
+            }
+            return m('span', '');
+        }
+    },
 };
 
 module.exports = LogText;
