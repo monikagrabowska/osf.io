@@ -31,7 +31,7 @@ def on_preprint_updated(preprint_id):
                     'data': {'@graph': format_preprint(preprint)}
                 }
             }
-        }, headers={'Authorization': 'Bearer {}'.format(preprint.provider.access_token), 'Content-Type': 'application/vnd.api+json'}, verify=False)
+        }, headers={'Authorization': 'Bearer {}'.format(preprint.provider.access_token), 'Content-Type': 'application/vnd.api+json'})
         logger.debug(resp.content)
         resp.raise_for_status()
 
@@ -101,7 +101,7 @@ def format_preprint(preprint):
     preprint_graph = GraphNode('preprint', **{
         'title': preprint.node.title,
         'description': preprint.node.description or '',
-        'is_deleted': not preprint.is_published or not preprint.node.is_public or preprint.node.is_preprint_orphan,
+        'is_deleted': not preprint.is_published or not preprint.node.is_public or preprint.node.is_preprint_orphan or 'qatest' in (preprint.node.tags or []) or preprint.node.is_deleted,
         'date_updated': preprint.date_modified.isoformat(),
         'date_published': preprint.date_published.isoformat() if preprint.date_published else None
     })
