@@ -5,6 +5,8 @@ import sys
 import logging
 import datetime
 import dateutil
+from django.utils import timezone
+from django.db import transaction
 from modularodm import Q
 from website.app import init_app
 from website import models
@@ -12,7 +14,6 @@ from framework.auth.core import Auth
 from scripts import utils as script_utils
 from framework.mongo import database as db
 from framework.celery_tasks import app as celery_app
-from framework.transactions.context import TokuTransaction
 from website.project.utils import activity
 from website.settings import \
     POPULAR_LINKS_NODE, NEW_AND_NOTEWORTHY_LINKS_NODE,\
@@ -50,7 +51,7 @@ def get_new_and_noteworthy_nodes():
     Mainly: public top-level projects with the greatest number of unique log actions
 
     """
-    today = datetime.datetime.now()
+    today = timezone.now()
     last_month = (today - dateutil.relativedelta.relativedelta(months=1))
     data = db.node.find({'date_created': {'$gt': last_month}, 'is_public': True, 'is_registration': False, 'parent_node': None,
                          'is_deleted': False, 'is_collection': False})
@@ -118,7 +119,7 @@ def main(dry_run=True):
 def run_main(dry_run=True):
     if not dry_run:
         script_utils.add_file_logger(logger, __file__)
-    with TokuTransaction():
+    with transaction.atomic():
         main(dry_run=dry_run)
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@ import re
 
 from modularodm import Q
 from rest_framework import generics
-from rest_framework.exceptions import NotFound
+from rest_framework.exceptions import NotFound, PermissionDenied, NotAuthenticated
 from rest_framework import permissions as drf_permissions
 
 from website.models import PreprintService
@@ -15,7 +15,7 @@ from api.base.parsers import (
     JSONAPIMultipleRelationshipsParser,
     JSONAPIMultipleRelationshipsParserForRegularJSON,
 )
-from api.base.utils import get_object_or_error
+from api.base.utils import get_object_or_error, get_user_auth
 from api.base import permissions as base_permissions
 from api.citations.utils import render_citation, preprint_csl
 from api.preprints.serializers import (
@@ -155,6 +155,20 @@ class PreprintList(JSONAPIBaseView, generics.ListCreateAPIView, ODMFilterMixin):
     view_category = 'preprints'
     view_name = 'preprint-list'
 
+    # overrides FilterMixin
+    def postprocess_query_param(self, key, field_name, operation):
+        # tag queries will usually be on Tag.name,
+        # ?filter[tags]=foo should be translated to Q('tags__name', 'eq', 'foo')
+        # But queries on lists should be tags, e.g.
+        # ?filter[tags]=foo,bar should be translated to Q('tags', 'isnull', True)
+        # ?filter[tags]=[] should be translated to Q('tags', 'isnull', True)
+        if field_name == 'tags':
+            if operation['value'] not in (list(), tuple()):
+                operation['source_field_name'] = 'tags__name'
+
+        if field_name == 'provider':
+            operation['source_field_name'] = 'provider___id'
+
     def get_serializer_class(self):
         if self.request.method == 'POST':
             return PreprintCreateSerializer
@@ -275,7 +289,6 @@ class PreprintCitationDetail(JSONAPIBaseView, generics.RetrieveAPIView, Preprint
     permission_classes = (
         drf_permissions.IsAuthenticatedOrReadOnly,
         base_permissions.TokenHasScope,
-        ContributorOrPublic,
     )
 
     required_read_scopes = [CoreScopes.NODE_CITATIONS_READ]
@@ -287,7 +300,12 @@ class PreprintCitationDetail(JSONAPIBaseView, generics.RetrieveAPIView, Preprint
 
     def get_object(self):
         preprint = self.get_preprint()
-        return preprint_csl(preprint, preprint.node)
+        auth = get_user_auth(self.request)
+
+        if preprint.node.is_public or preprint.node.can_view(auth) or preprint.is_published:
+            return preprint_csl(preprint, preprint.node)
+
+        raise PermissionDenied if auth.user else NotAuthenticated
 
 
 class PreprintCitationStyleDetail(JSONAPIBaseView, generics.RetrieveAPIView, PreprintMixin):
@@ -303,7 +321,6 @@ class PreprintCitationStyleDetail(JSONAPIBaseView, generics.RetrieveAPIView, Pre
     permission_classes = (
         drf_permissions.IsAuthenticatedOrReadOnly,
         base_permissions.TokenHasScope,
-        ContributorOrPublic,
     )
 
     required_read_scopes = [CoreScopes.NODE_CITATIONS_READ]
@@ -315,11 +332,16 @@ class PreprintCitationStyleDetail(JSONAPIBaseView, generics.RetrieveAPIView, Pre
 
     def get_object(self):
         preprint = self.get_preprint()
+        auth = get_user_auth(self.request)
         style = self.kwargs.get('style_id')
-        try:
-            citation = render_citation(node=preprint, style=style)
-        except ValueError as err:  # style requested could not be found
-            csl_name = re.findall('[a-zA-Z]+\.csl', err.message)[0]
-            raise NotFound('{} is not a known style.'.format(csl_name))
 
-        return {'citation': citation, 'id': style}
+        if preprint.node.is_public or preprint.node.can_view(auth) or preprint.is_published:
+            try:
+                citation = render_citation(node=preprint, style=style)
+            except ValueError as err:  # style requested could not be found
+                csl_name = re.findall('[a-zA-Z]+\.csl', err.message)[0]
+                raise NotFound('{} is not a known style.'.format(csl_name))
+
+            return {'citation': citation, 'id': style}
+
+        raise PermissionDenied if auth.user else NotAuthenticated
