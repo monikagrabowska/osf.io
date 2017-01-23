@@ -10,14 +10,15 @@
 3. Setup the Operating System
   - OSX
     - Alias the loopback interface
-
-      `$ sudo cp com.runlevel1.lo0.192.168.168.167.plist /Library/LaunchDaemons`
-
-      `$ sudo chmod 0644 /Library/LaunchDaemons/com.runlevel1.lo0.192.168.168.167.plist`
-
-      `$ sudo chown root:wheel /Library/LaunchDaemons/com.runlevel1.lo0.192.168.168.167.plist`
-
-      `$ sudo launchctl load /Library/LaunchDaemons/com.runlevel1.lo0.192.168.168.167.plist`
+    
+    ```bash
+    export libdir='/Library/LaunchDaemons' \
+      && export file='com.runlevel1.lo0.192.168.168.167.plist' \
+      && sudo cp $file $libdir \
+      && sudo chmod 0644 $libdir/$file \
+      && sudo chown root:wheel $libdir/$file \
+      && sudo launchctl load $libdir/$file
+    ```
 
   - Windows
     - Install Microsoft Loopback Adapter (Windows 10 follow community comments as the driver was renamed)
@@ -91,14 +92,18 @@
 ## Docker Sync
 
 1. Install Docker Sync
+  - Mac: `$ sudo gem install docker-sync`
   - [Instructions](http://docker-sync.io)
+  
+1. Install fswatch and unison
+  - Mac: `$ brew install fswatch unison`
 
-2. Running Docker Sync
+1. Running Docker Sync
 
     _NOTE: Wait for Docker Sync to fully start before running any docker-compose commands._
   - `$ docker-sync start`
 
-3. OPTIONAL: If you have problems trying installing macfsevents
+1. OPTIONAL: If you have problems trying installing macfsevents
   - `$ sudo pip install macfsevents`
 
 ## Application Runtime
@@ -171,9 +176,14 @@
 
 ## Application Debugging
 - Console Debugging with IPDB
-  - `docker attach [projectname]_web_1`
+  - `$ docker attach [projectname]_web_1`
 
     _NOTE: You can detach from a container and leave it running using the CTRL-p CTRL-q key sequence._
+
+  - `$ docker-compose up web`
+
+    _NOTE: Lacks detachment key sequence, see: https://github.com/docker/compose/issues/3311_
+
 - Remote Debugging with PyCharm
   - Add a Python Remote Debugger per container
     - Name: `Remote Debug (web)`
@@ -206,6 +216,9 @@ Recreate a container _(useful to ensure all environment variables/volume changes
 Delete a container _(does not remove volumes)_:
   - `$ docker-compose stop -t 0 assets`
   - `$ docker-compose rm assets`
+
+List containers and status:
+  - `$ docker-compose ps`
 
 ## Cleanup & Docker Reset
 
