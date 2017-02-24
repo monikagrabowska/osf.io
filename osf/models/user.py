@@ -33,7 +33,7 @@ from framework.sessions.utils import remove_sessions_for_user
 from framework.mongo import get_cache_key
 from modularodm.exceptions import NoResultsFound
 from osf.exceptions import reraise_django_validation_errors
-from osf.models.base import BaseModel, GuidMixin
+from osf.models.base import BaseModel, GuidMixin, GuidMixinQuerySet
 from osf.models.contributor import RecentlyAddedContributor
 from osf.models.institution import Institution
 from osf.models.mixins import AddonModelMixin
@@ -64,6 +64,14 @@ name_formatters = {
 
 
 class OSFUserManager(BaseUserManager):
+
+    _queryset_class = GuidMixinQuerySet
+
+    def all(self):
+        qs = super(OSFUserManager, self).all()
+        qs.annotate_query_with_guids()
+        return qs
+
     def create_user(self, username, password=None):
         if not username:
             raise ValueError('Users must have a username')
@@ -1223,15 +1231,12 @@ class OSFUser(DirtyFieldsMixin, GuidMixin, BaseModel, AbstractBaseUser, Permissi
                  .filter(_contributors=other_user)
                  .distinct())
 
-    def get_projects_in_common(self, other_user, primary_keys=True):
+    def get_projects_in_common(self, other_user):
         """Returns either a collection of "shared projects" (projects that both users are contributors for)
         or just their primary keys
         """
         query = self._projects_in_common_query(other_user)
-        if primary_keys:
-            return set(query.values_list('guids___id', flat=True))
-        else:
-            return set(query.all())
+        return set(query.all())
 
     def n_projects_in_common(self, other_user):
         """Returns number of "shared projects" (projects that both users are contributors for)"""
@@ -1306,11 +1311,10 @@ class OSFUser(DirtyFieldsMixin, GuidMixin, BaseModel, AbstractBaseUser, Permissi
         """
         try:
             email_domains = [email.split('@')[1].lower() for email in self.emails]
-            insts = Institution.find(Q('email_domains', 'overlap', email_domains))
-            affiliated = self.affiliated_institutions.all()
-            self.affiliated_institutions.add(*[each for each in insts
-                                                if each not in affiliated])
-        except (IndexError, NoResultsFound):
+            insts = Institution.objects.filter(email_domains__overlap=email_domains)
+            if insts.exists():
+                self.affiliated_institutions.add(*insts)
+        except IndexError:
             pass
 
     def remove_institution(self, inst_id):
