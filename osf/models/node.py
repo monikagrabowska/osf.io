@@ -18,6 +18,7 @@ from django.db import models, transaction, connection
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.utils import timezone
+from django.utils.functional import cached_property
 from keen import scoped_keys
 from modularodm import Q as MQ
 from psycopg2._psycopg import AsIs
@@ -238,12 +239,12 @@ class AbstractNode(DirtyFieldsMixin, TypedModel, AddonModelMixin, IdentifierMixi
 
     objects = AbstractNodeQuerySet.as_manager()
 
-    @property
+    @cached_property
     def parent_node(self):
         node_rel = NodeRelation.objects.filter(
             child=self,
             is_node_link=False
-        ).first()
+        ).select_related('parent').first()
         if node_rel:
             parent = node_rel.parent
             if parent:
@@ -1233,10 +1234,7 @@ class AbstractNode(DirtyFieldsMixin, TypedModel, AddonModelMixin, IdentifierMixi
             return False
 
         # Node must have at least one registered admin user
-        admin_query = Contributor.objects.select_related('user').filter(
-            user__is_active=True,
-            admin=True
-        ).exclude(user=contributor)
+        admin_query = self._get_admin_contributors_query(self._contributors.all()).exclude(user=contributor)
         if not admin_query.exists():
             return False
 
@@ -1990,6 +1988,7 @@ class AbstractNode(DirtyFieldsMixin, TypedModel, AddonModelMixin, IdentifierMixi
 
     def _get_admin_contributors_query(self, users):
         return Contributor.objects.select_related('user').filter(
+            node=self,
             user__in=users,
             user__is_active=True,
             admin=True
@@ -2266,7 +2265,7 @@ class AbstractNode(DirtyFieldsMixin, TypedModel, AddonModelMixin, IdentifierMixi
 
             # Suspend the flagged user for spam.
             if 'spam_flagged' not in user.system_tags:
-                user.system_tags.append('spam_flagged')
+                user.add_system_tag('spam_flagged')
             if not user.is_disabled:
                 user.disable_account()
                 user.is_registered = False
@@ -2891,11 +2890,6 @@ class Collection(AbstractNode):
         # Bookmark collections are always named 'Bookmarks'
         if self.is_bookmark_collection and self.title != 'Bookmarks':
             self.title = 'Bookmarks'
-        # On creation, ensure there isn't an existing Bookmark collection for the given user
-        if not self.pk:
-            # TODO: Use a partial index to enforce this constraint in the db
-            if self.is_bookmark_collection and Collection.objects.filter(is_bookmark_collection=True, creator=self.creator).exists():
-                raise NodeStateError('Only one bookmark collection allowed per user.')
         return super(Collection, self).save(*args, **kwargs)
 
 
@@ -2962,3 +2956,8 @@ def set_parent(sender, instance, created, *args, **kwargs):
             child=instance,
             is_node_link=False
         )
+        # remove cached copy of parent_node
+        try:
+            del instance.__dict__['parent_node']
+        except KeyError:
+            pass
