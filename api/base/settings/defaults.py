@@ -113,9 +113,6 @@ INSTALLED_APPS = (
 if osf_settings.SECURE_MODE and DEBUG:
     INSTALLED_APPS += ('sslserver',)
 
-if DEBUG:
-    INSTALLED_APPS += ('debug_toolbar', )
-
 # TODO: Are there more granular ways to configure reporting specifically related to the API?
 RAVEN_CONFIG = {
     'tags': {'App': 'api'},
